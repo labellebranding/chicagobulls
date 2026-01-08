@@ -1,9 +1,10 @@
 # app.py
-# Streamlit dashboard for Bulls subreddit game threads (deterministic rules only)
+# Streamlit dashboard for Bulls subreddit game threads
+# Deterministic rules only, UI/UX refactor to be "belief intelligence" first
 
 import re
 from collections import Counter
-from datetime import datetime, timezone, date
+from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -11,9 +12,36 @@ import streamlit as st
 
 
 # -----------------------------
-# Page config
+# Page config + light styling
 # -----------------------------
-st.set_page_config(page_title="Bulls Reddit Narrative Dashboard", layout="wide")
+st.set_page_config(page_title="Bulls Fan Belief Intelligence", layout="wide")
+
+st.markdown(
+    """
+<style>
+/* tighten default spacing */
+.block-container { padding-top: 1.1rem; padding-bottom: 2rem; }
+h1, h2, h3 { letter-spacing: -0.02em; }
+small, .stCaption { opacity: 0.8; }
+
+/* make metric cards feel more "dashboard" */
+[data-testid="stMetric"] {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 14px 14px 10px 14px;
+  border-radius: 14px;
+}
+
+/* tables */
+[data-testid="stDataFrame"] {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
 # -----------------------------
@@ -31,6 +59,7 @@ PLAYERS: Dict[str, List[str]] = {
     # add more
 }
 
+# Legacy themes (kept for compatibility)
 THEMES: Dict[str, List[str]] = {
     "injury": [r"\binjur", r"\bconcussion\b", r"\bprotocol\b", r"\bout\b", r"\bquestionable\b"],
     "coaching": [r"\bcoach\b", r"\bcoaching\b", r"\blineup\b", r"\brotation\b", r"\btimeouts?\b", r"\bdonovan\b"],
@@ -39,8 +68,70 @@ THEMES: Dict[str, List[str]] = {
     "front_office": [r"\bfront office\b", r"\bakme\b", r"\bkarnisovas\b", r"\btrade\b", r"\bdeadline\b"],
     "effort_identity": [r"\beffort\b", r"\bsoft\b", r"\bheart\b", r"\bidentity\b", r"\bvibes\b"],
     "tanking": [r"\btank\b", r"\blottery\b", r"\bpicks?\b", r"\btop pick\b"],
-    # add more
 }
+
+# Belief themes (what leadership should care about)
+# These are designed to be outcome-independent narratives.
+BELIEF_THEMES: Dict[str, Dict] = {
+    "Build around Matas / youth": {
+        "patterns": [
+            r"\bbuild around\b", r"\byouth\b", r"\bdevelopment\b", r"\brebuild\b",
+            r"\bplay the kids\b", r"\bplay the young\b", r"\bmatas\b", r"\bbuzelis\b",
+            r"\bfuture\b", r"\bcore\b",
+        ],
+        "outcome_independent": True,
+    },
+    "Trade / move on from vets": {
+        "patterns": [
+            r"\btrade\b", r"\bdeadline\b", r"\bmove on\b", r"\bblow it up\b", r"\btear it down\b",
+            r"\bvets\b", r"\bget rid of\b", r"\bship\b", r"\bsell\b",
+            r"\bvuc\b", r"\bvucevic\b", r"\bcoby\b", r"\bpwill\b", r"\bpatrick williams\b",
+        ],
+        "outcome_independent": True,
+    },
+    "Rebounding / physicality issues": {
+        "patterns": [
+            r"\brebound", r"\bboards?\b", r"\bbox out\b", r"\bphysical\b", r"\bsoft\b",
+            r"\bsize\b", r"\bpaint\b", r"\bbig\b",
+        ],
+        "outcome_independent": True,
+    },
+    "Injury mismanagement / rushing players": {
+        "patterns": [
+            r"\binjur", r"\bconcussion\b", r"\bprotocol\b", r"\brushed\b", r"\btoo soon\b",
+            r"\bmedical\b", r"\btraining staff\b", r"\bmismanag", r"\bshouldn't be playing\b",
+        ],
+        "outcome_independent": True,
+    },
+    "Team identity problem": {
+        "patterns": [
+            r"\bidentity\b", r"\bwho are we\b", r"\bno identity\b", r"\bwhat is this team\b",
+            r"\bdirection\b", r"\bplan\b", r"\bphilosophy\b",
+        ],
+        "outcome_independent": True,
+    },
+    "Shot selection": {
+        "patterns": [
+            r"\bshot selection\b", r"\bbad shots?\b", r"\bchucking\b", r"\bhero ball\b",
+            r"\bsettling\b", r"\bthree\b", r"\bthrees\b", r"\bbrick\b",
+        ],
+        "outcome_independent": True,
+    },
+}
+
+# Win/loss decoupling signal phrases (fans reframing losses as acceptable/desirable)
+WIN_LOSS_DECOUPLING: List[str] = [
+    r"\bethical tank\b", r"\bperfect tank win\b", r"\btank win\b", r"\btrade the l\b",
+    r"\bI'll take the l\b", r"\blosing is fine\b", r"\bkeep losing\b", r"\bloss is fine\b",
+    r"\blottery odds\b", r"\btop pick\b", r"\btank\b",
+]
+
+# Organizational distrust signals
+ORG_DISTRUST: List[str] = [
+    r"\bfront office\b", r"\bakme\b", r"\bkarnisovas\b", r"\bownership\b", r"\breinsdorf\b",
+    r"\bgarpax\b", r"\bthis organization\b", r"\bno plan\b", r"\bnever change\b",
+    r"\bfire\b", r"\bsell the team\b",
+]
 
 NEG_WORDS = [
     r"\btrash\b", r"\bembarrass", r"\bawful\b", r"\bworst\b", r"\bpathetic\b",
@@ -111,163 +202,10 @@ def comment_hits_any_patterns(text: str, pats: List[str]) -> bool:
     return any(re.search(p, txt, flags=re.I) for p in pats)
 
 
-def comment_hits_theme(body: str, theme: str) -> bool:
-    pats = THEMES.get(theme, [])
-    return comment_hits_any_patterns(body, pats)
-
-
-def comment_hits_player(body: str, player: str) -> bool:
-    pats = PLAYERS.get(player, [])
-    return comment_hits_any_patterns(body, pats)
-
-
 def pct(part: int, total: int) -> float:
     if total <= 0:
         return 0.0
     return round(100.0 * part / total, 1)
-
-
-def player_counts_for_df(df_subset: pd.DataFrame) -> Counter:
-    c = Counter()
-    bodies = df_subset["body"].astype(str).tolist()
-    for body in bodies:
-        for player, pats in PLAYERS.items():
-            hits = 0
-            for p in pats:
-                hits += len(re.findall(p, body, flags=re.I))
-            if hits:
-                c[player] += hits
-    return c
-
-
-def theme_counts_for_df(df_subset: pd.DataFrame) -> Counter:
-    c = Counter()
-    bodies = df_subset["body"].astype(str).tolist()
-    for body in bodies:
-        for theme, pats in THEMES.items():
-            if comment_hits_any_patterns(body, pats):
-                c[theme] += 1
-    return c
-
-
-def theme_kpi_table(df_subset: pd.DataFrame) -> pd.DataFrame:
-    total = max(len(df_subset), 1)
-    rows = []
-    for theme in THEMES.keys():
-        hit_mask = df_subset["body"].apply(lambda t: comment_hits_theme(t, theme))
-        hits = int(hit_mask.sum())
-        if hits == 0:
-            continue
-
-        sub = df_subset[hit_mask].copy()
-        neg_pct = round(100.0 * (sub["sentiment"] == "negative").mean(), 1)
-
-        live_hits = int((sub["thread_type"] == "live_game").sum())
-        post_hits = int((sub["thread_type"] == "postgame").sum())
-        spike = post_hits - live_hits
-
-        rows.append(
-            {
-                "theme": theme,
-                "hits": hits,
-                "share_%": round(100.0 * hits / total, 1),
-                "negative_%": neg_pct,
-                "live_hits": live_hits,
-                "post_hits": post_hits,
-                "post_minus_live": spike,
-            }
-        )
-
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out
-    return out.sort_values(["hits", "post_minus_live"], ascending=[False, False])
-
-
-def top_comments_for_theme(df_subset: pd.DataFrame, theme: str, limit: int = 25) -> pd.DataFrame:
-    x = df_subset.copy()
-    x["hits_theme"] = x["body"].apply(lambda t: comment_hits_theme(t, theme))
-    x = x[x["hits_theme"] == True].copy()
-
-    x["score_num"] = pd.to_numeric(x["score"], errors="coerce").fillna(0).astype(int)
-    cols = [c for c in ["game_date", "thread_type", "author", "score_num", "sentiment", "body"] if c in x.columns]
-    x = x.sort_values("score_num", ascending=False)[cols].head(limit)
-    return x.rename(columns={"score_num": "score"})
-
-
-def most_negative_for_theme(df_subset: pd.DataFrame, theme: str, limit: int = 25) -> pd.DataFrame:
-    x = df_subset.copy()
-    x["hits_theme"] = x["body"].apply(lambda t: comment_hits_theme(t, theme))
-    x = x[x["hits_theme"] == True].copy()
-    x = x[x["sentiment"].isin(["negative", "mixed"])].copy()
-
-    x["score_num"] = pd.to_numeric(x["score"], errors="coerce").fillna(0).astype(int)
-    cols = [c for c in ["game_date", "thread_type", "author", "score_num", "sentiment", "body"] if c in x.columns]
-    x = x.sort_values("score_num", ascending=False)[cols].head(limit)
-    return x.rename(columns={"score_num": "score"})
-
-
-def deterministic_game_narrative(g: pd.DataFrame) -> Dict:
-    bullets: List[str] = []
-    total_comments = len(g)
-
-    by_type = g.groupby("thread_type").size().to_dict()
-    live_ct = int(by_type.get("live_game", 0))
-    post_ct = int(by_type.get("postgame", 0))
-    pre_ct = int(by_type.get("pregame", 0))
-
-    s_all = Counter(g["sentiment"].astype(str).tolist())
-    neg = int(s_all.get("negative", 0))
-    pos = int(s_all.get("positive", 0))
-    neu = int(s_all.get("neutral", 0))
-    mix = int(s_all.get("mixed", 0))
-
-    bullets.append(f"Engagement: {total_comments} total comments (live_game {live_ct}, postgame {post_ct}, pregame {pre_ct}).")
-    bullets.append(
-        f"Tone mix (heuristic): {pct(neg, total_comments)}% negative, "
-        f"{pct(mix, total_comments)}% mixed, {pct(neu, total_comments)}% neutral, {pct(pos, total_comments)}% positive."
-    )
-
-    if live_ct > 0 and post_ct > 0:
-        if post_ct > live_ct * 1.25:
-            bullets.append("Conversation intensified after the final: postgame volume was meaningfully higher than live_game.")
-        elif live_ct > post_ct * 1.25:
-            bullets.append("Conversation peaked during the game: live_game volume was meaningfully higher than postgame.")
-        else:
-            bullets.append("Engagement was steady: live_game and postgame volume were in a similar range.")
-
-    themes_all = theme_counts_for_df(g)
-    top_themes = [k for k, _ in themes_all.most_common(4)]
-    if top_themes:
-        bullets.append("Top narratives: " + ", ".join(top_themes) + ".")
-
-    players_all = player_counts_for_df(g)
-    top_players = players_all.most_common(6)
-    if top_players:
-        bullets.append("Most discussed: " + ", ".join([f"{p} ({c})" for p, c in top_players[:3]]) + ".")
-
-    heat_score = round((neg / max(total_comments, 1)) * 100 + (total_comments / 60), 1)
-    if heat_score >= 70:
-        bullets.append("Heat level: HIGH. High volume plus heavy negativity suggests elevated frustration / reputational risk.")
-    elif heat_score >= 45:
-        bullets.append("Heat level: MODERATE. Noticeable criticism, but not an all-out meltdown.")
-    else:
-        bullets.append("Heat level: LOW. Conversation leaned neutral-to-positive or stayed relatively calm.")
-
-    fan_quotes = g.copy()
-    fan_quotes["score_num"] = pd.to_numeric(fan_quotes["score"], errors="coerce").fillna(0).astype(int)
-    fan_quotes = fan_quotes.sort_values("score_num", ascending=False).head(15)
-    cols = [c for c in ["game_date", "thread_type", "author", "score_num", "sentiment", "body"] if c in fan_quotes.columns]
-    fan_quotes = fan_quotes[cols].rename(columns={"score_num": "score"})
-
-    return {
-        "bullets": bullets,
-        "heat_score": heat_score,
-        "themes_all": themes_all,
-        "players_all": players_all,
-        "sent_counts": s_all,
-        "fan_quotes": fan_quotes,
-    }
 
 
 def _ensure_no_duplicate_columns(df_in: pd.DataFrame) -> pd.DataFrame:
@@ -320,6 +258,9 @@ def load_uploaded_csvs(files) -> pd.DataFrame:
         df["body"] = df["body"].apply(safe_text)
         df["sentiment"] = df["body"].apply(classify_sentiment)
 
+        # numeric score
+        df["score_num"] = pd.to_numeric(df["score"], errors="coerce").fillna(0).astype(int)
+
         all_rows.append(df)
 
     if not all_rows:
@@ -331,14 +272,188 @@ def load_uploaded_csvs(files) -> pd.DataFrame:
     return out
 
 
-# -----------------------------
-# UI
-# -----------------------------
-st.title("Bulls Reddit Narrative Dashboard (Deterministic Rules)")
+def belief_counts(df_subset: pd.DataFrame) -> Counter:
+    c = Counter()
+    bodies = df_subset["body"].astype(str).tolist()
+    for body in bodies:
+        for belief, meta in BELIEF_THEMES.items():
+            if comment_hits_any_patterns(body, meta["patterns"]):
+                c[belief] += 1
+    return c
 
-st.sidebar.header("Upload your comment CSVs")
+
+def player_mention_counts_unique(df_subset: pd.DataFrame) -> Dict[str, int]:
+    """
+    Counts # of comments mentioning each player (not raw mention hits).
+    This matches the "Narrative Concentration" concept better.
+    """
+    out = {}
+    for player, pats in PLAYERS.items():
+        mask = df_subset["body"].apply(lambda t: comment_hits_any_patterns(t, pats))
+        out[player] = int(mask.sum())
+    return out
+
+
+def player_sentiment_split(df_subset: pd.DataFrame, player: str) -> Counter:
+    pats = PLAYERS.get(player, [])
+    x = df_subset[df_subset["body"].apply(lambda t: comment_hits_any_patterns(t, pats))].copy()
+    return Counter(x["sentiment"].astype(str).tolist())
+
+
+def top_comments(df_subset: pd.DataFrame, mask: pd.Series, limit: int = 12) -> pd.DataFrame:
+    x = df_subset[mask].copy()
+    x = x.sort_values("score_num", ascending=False)
+    cols = [c for c in ["game_date", "thread_type", "author", "score_num", "sentiment", "body"] if c in x.columns]
+    x = x[cols].head(limit).rename(columns={"score_num": "score"})
+    return x
+
+
+def brand_loyalty_state(df_subset: pd.DataFrame, anchor_player: Optional[str]) -> str:
+    """
+    Binary-style framing: emotionally invested vs distrustful vs disengaging.
+    Deterministic heuristic.
+    """
+    total = max(len(df_subset), 1)
+
+    distrust_mask = df_subset["body"].apply(lambda t: comment_hits_any_patterns(t, ORG_DISTRUST))
+    distrust_pct = (distrust_mask.mean() * 100.0) if total else 0.0
+
+    # Emotional investment proxy: anchor player positivity AND mention volume
+    invested = False
+    if anchor_player:
+        split = player_sentiment_split(df_subset, anchor_player)
+        mentions = player_mention_counts_unique(df_subset).get(anchor_player, 0)
+        pos = split.get("positive", 0)
+        neg = split.get("negative", 0)
+        invested = (mentions >= max(3, int(0.08 * total))) and (pos >= max(2, neg))
+
+    if invested and distrust_pct >= 6:
+        return "Emotionally invested but distrustful"
+    if invested and distrust_pct < 6:
+        return "Emotionally invested"
+    if (not invested) and distrust_pct >= 6:
+        return "Low player attachment, high organizational distrust"
+    return "Low emotional investment (watch for disengagement)"
+
+
+def find_emotional_anchor(df_subset: pd.DataFrame) -> Optional[str]:
+    """
+    Choose the player with meaningful conversation share and the strongest positive skew.
+    """
+    total = max(len(df_subset), 1)
+    mentions = player_mention_counts_unique(df_subset)
+
+    candidates = []
+    for player, m in mentions.items():
+        if m < max(3, int(0.06 * total)):  # must be present enough to matter
+            continue
+        split = player_sentiment_split(df_subset, player)
+        pos = split.get("positive", 0)
+        neg = split.get("negative", 0)
+        mixed = split.get("mixed", 0)
+
+        # score: prefer strong positive, penalize negative, allow some mixed
+        score = (pos * 2.0) + (mixed * 0.4) - (neg * 2.2) + (m * 0.15)
+        candidates.append((score, player))
+
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def win_loss_decoupling_pct(df_subset: pd.DataFrame) -> float:
+    mask = df_subset["body"].apply(lambda t: comment_hits_any_patterns(t, WIN_LOSS_DECOUPLING))
+    return round(mask.mean() * 100.0, 1)
+
+
+def heat_score(df_subset: pd.DataFrame) -> float:
+    total = max(len(df_subset), 1)
+    neg_ct = int((df_subset["sentiment"] == "negative").sum())
+    # deterministic blend of negativity + volume
+    return round((neg_ct / total) * 100.0 + (len(df_subset) / 60.0), 1)
+
+
+def momentum_indicator(current: int, prior: int) -> str:
+    if prior == 0 and current > 0:
+        return "↑"
+    if current == 0 and prior > 0:
+        return "↓"
+    if prior == 0 and current == 0:
+        return "→"
+    ratio = current / max(prior, 1)
+    if ratio >= 1.20:
+        return "↑"
+    if ratio <= 0.80:
+        return "↓"
+    return "→"
+
+
+def belief_table_with_momentum(df_subset: pd.DataFrame, compare_subset: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """
+    If compare_subset is provided, show ↑ → ↓ vs that baseline.
+    Otherwise momentum column is blank.
+    """
+    total = max(len(df_subset), 1)
+    cur = belief_counts(df_subset)
+    base = belief_counts(compare_subset) if compare_subset is not None else Counter()
+
+    rows = []
+    for belief, meta in BELIEF_THEMES.items():
+        hits = int(cur.get(belief, 0))
+        if hits == 0:
+            continue
+        rows.append(
+            {
+                "belief_theme": belief,
+                "mentions": hits,
+                "share_%": round(100.0 * hits / total, 1),
+                "outcome_independent": "Yes" if meta.get("outcome_independent") else "No",
+                "momentum": (momentum_indicator(hits, int(base.get(belief, 0))) if compare_subset is not None else ""),
+            }
+        )
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    out = out.sort_values(["mentions", "share_%"], ascending=[False, False])
+    return out
+
+
+def narrative_concentration_df(df_subset: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+    total = max(len(df_subset), 1)
+    mentions = player_mention_counts_unique(df_subset)
+    rows = []
+    for player, ct in mentions.items():
+        if ct == 0:
+            continue
+        rows.append({"player": player, "comments_mentioning": ct, "share_%": pct(ct, total)})
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    out = out.sort_values(["comments_mentioning"], ascending=False).head(top_n)
+    return out
+
+
+def safe_table(df_in: pd.DataFrame) -> pd.DataFrame:
+    x = df_in.copy()
+    x = _ensure_no_duplicate_columns(x)
+    return x
+
+
+# -----------------------------
+# Header
+# -----------------------------
+st.title("Bulls Fan Belief Intelligence")
+st.caption("Deterministic rules only. This dashboard is designed to surface dominant fan narratives, emotional anchors, and belief movement.")
+
+
+# -----------------------------
+# Data upload
+# -----------------------------
+st.sidebar.header("Data")
 uploaded = st.sidebar.file_uploader(
-    "Upload one or more files (data/comments_by_thread/*.csv)",
+    "Upload one or more CSVs",
     type=["csv"],
     accept_multiple_files=True,
 )
@@ -353,7 +468,9 @@ if df.empty:
     st.error("No rows found. Make sure the uploaded CSVs contain comment rows.")
     st.stop()
 
-# Filters
+# -----------------------------
+# Global filters (minimal)
+# -----------------------------
 st.sidebar.header("Filters")
 
 all_dates = sorted([d for d in df["game_date"].dropna().unique().tolist() if d and d != "None"])
@@ -362,107 +479,298 @@ if not all_dates:
     st.stop()
 
 default_idx = len(all_dates) - 1
-game_date = st.sidebar.selectbox("Game date", options=all_dates, index=default_idx)
+selected_game_date = st.sidebar.selectbox("Game", options=all_dates, index=default_idx)
 
 thread_types = ["pregame", "live_game", "postgame"]
-type_filter = st.sidebar.multiselect("Thread types", options=thread_types, default=thread_types)
+selected_types = st.sidebar.multiselect("Thread types", options=thread_types, default=thread_types)
 
-st.sidebar.markdown("### Search")
-q = st.sidebar.text_input("Search comment text (contains)", value="").strip().lower()
+q = st.sidebar.text_input("Search (optional)", value="").strip().lower()
 
-f = df[(df["game_date"] == game_date) & (df["thread_type"].isin(type_filter))].copy()
+f = df[(df["game_date"] == selected_game_date) & (df["thread_type"].isin(selected_types))].copy()
 if q:
     f = f[f["body"].str.lower().str.contains(re.escape(q), na=False)].copy()
 
-tabs = st.tabs(["Dashboard", "Game-by-Game Report", "Weekly Report", "Raw Data"])
+
+# -----------------------------
+# Tabs: use navigation-first structure
+# -----------------------------
+tabs = st.tabs(
+    [
+        "Game Snapshot",
+        "Player Beliefs",
+        "Fan Psychology",
+        "Narrative Trends",
+        "Raw Data",
+    ]
+)
 
 
 # -----------------------------
-# Dashboard tab
+# Tab 1: Game Snapshot
 # -----------------------------
 with tabs[0]:
-    st.subheader("Dashboard")
-
     total_comments = len(f)
     unique_authors = int(f["author"].nunique(dropna=True))
     live_ct = int((f["thread_type"] == "live_game").sum())
     post_ct = int((f["thread_type"] == "postgame").sum())
+    pre_ct = int((f["thread_type"] == "pregame").sum())
 
-    sent_counts = f["sentiment"].value_counts()
-    neg_ct = int(sent_counts.get("negative", 0))
-    pos_ct = int(sent_counts.get("positive", 0))
+    neg_ct = int((f["sentiment"] == "negative").sum())
+    pos_ct = int((f["sentiment"] == "positive").sum())
+    mix_ct = int((f["sentiment"] == "mixed").sum())
+    neu_ct = int((f["sentiment"] == "neutral").sum())
 
-    # Exec KPI strip
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    heat = round((neg_ct / max(total_comments, 1)) * 100 + (total_comments / 60), 1)
-    col1.metric("Heat score", heat)
-    col2.metric("Comments", total_comments)
-    col3.metric("Unique authors", unique_authors)
-    col4.metric("Neg %", f"{pct(neg_ct, total_comments)}%")
-    col5.metric("Live game", live_ct)
-    col6.metric("Postgame", post_ct)
+    anchor = find_emotional_anchor(f)
 
-    st.markdown("### Sentiment mix (filtered)")
-    sent_df = sent_counts.rename_axis("sentiment").reset_index(name="count")
-    st.dataframe(sent_df, use_container_width=True)
+    belief_cts = belief_counts(f)
+    dominant_belief = belief_cts.most_common(1)[0][0] if belief_cts else "None detected"
+    decouple = win_loss_decoupling_pct(f)
+    heat = heat_score(f)
+    loyalty = brand_loyalty_state(f, anchor)
 
-    st.markdown("### Player mention leaderboard (filtered)")
-    pc = player_counts_for_df(f)
-    pc_df = pd.DataFrame(pc.most_common(25), columns=["player", "mentions"])
-    st.dataframe(pc_df, use_container_width=True)
+    # Global Snapshot row: 4 cards, insight-first
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Dominant belief theme", dominant_belief)
+    c2.metric("Emotional anchor player", anchor or "None detected")
+    c3.metric("Win/Loss decoupling", f"{decouple}%")
+    c4.metric("Brand loyalty state", loyalty)
 
-    st.markdown("### Theme tracking (filtered)")
-    theme_table = theme_kpi_table(f)
-    if theme_table.empty:
-        st.info("No theme hits found with current deterministic rules.")
+    st.markdown("")
+
+    # Secondary KPI strip (still useful, but not the hero)
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.metric("Heat score", heat)
+    k2.metric("Comments", total_comments)
+    k3.metric("Unique authors", unique_authors)
+    k4.metric("Neg %", f"{pct(neg_ct, total_comments)}%")
+    k5.metric("Live", live_ct)
+    k6.metric("Post", post_ct)
+
+    st.markdown("---")
+
+    # Narrative concentration: who the story is about
+    st.subheader("Narrative concentration")
+    st.caption("Counts comments mentioning each player (not raw word hits). This shows who the conversation centered on.")
+
+    conc = narrative_concentration_df(f, top_n=10)
+    if conc.empty:
+        st.info("No player mentions found with current deterministic rules.")
     else:
-        st.dataframe(theme_table, use_container_width=True)
+        left, right = st.columns([1.2, 0.8])
+        with left:
+            # Simple chart: Streamlit bar chart needs index
+            chart_df = conc.set_index("player")[["comments_mentioning"]]
+            st.bar_chart(chart_df, height=300)
+            # Always-visible insight
+            top_player = conc.iloc[0]["player"]
+            top_share = conc.iloc[0]["share_%"]
+            st.markdown(f"**Key insight:** Conversation concentrated around **{top_player}** (about **{top_share}%** of comments).")
+        with right:
+            st.dataframe(conc, use_container_width=True, hide_index=True)
 
-        st.markdown("### Theme drill-down")
-        theme_pick = st.selectbox("Select a theme to inspect", options=theme_table["theme"].tolist())
+    st.markdown("---")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("#### Top upvoted comments for this theme")
-            st.dataframe(top_comments_for_theme(f, theme_pick, limit=25), use_container_width=True)
+    # Belief themes: most important layer
+    st.subheader("Belief themes")
+    st.caption("Outcome-independent narratives. These usually matter more than the final score.")
 
-        with c2:
-            st.markdown("#### Most negative comments for this theme (sorted by score)")
-            st.dataframe(most_negative_for_theme(f, theme_pick, limit=25), use_container_width=True)
+    belief_tbl = belief_table_with_momentum(f)
+    if belief_tbl.empty:
+        st.info("No belief themes detected with the current belief dictionaries.")
+    else:
+        st.dataframe(belief_tbl, use_container_width=True, hide_index=True)
+
+        # Drill down: representative comments
+        st.markdown("#### Drill down: representative comments")
+        pick = st.selectbox("Select a belief theme", options=belief_tbl["belief_theme"].tolist())
+        patterns = BELIEF_THEMES[pick]["patterns"]
+        mask = f["body"].apply(lambda t: comment_hits_any_patterns(t, patterns))
+        st.dataframe(top_comments(f, mask, limit=12), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Tone summary (kept short)
+    st.subheader("Tone mix")
+    st.caption("Heuristic sentiment. Use it as directional context, not as the story.")
+    tone_df = pd.DataFrame(
+        [
+            {"tone": "negative", "count": neg_ct, "share_%": pct(neg_ct, total_comments)},
+            {"tone": "mixed", "count": mix_ct, "share_%": pct(mix_ct, total_comments)},
+            {"tone": "neutral", "count": neu_ct, "share_%": pct(neu_ct, total_comments)},
+            {"tone": "positive", "count": pos_ct, "share_%": pct(pos_ct, total_comments)},
+        ]
+    ).sort_values("count", ascending=False)
+    st.dataframe(tone_df, use_container_width=True, hide_index=True)
 
 
 # -----------------------------
-# Game-by-Game Report tab
+# Tab 2: Player Beliefs (expandable player cards)
 # -----------------------------
 with tabs[1]:
-    st.subheader(f"Game-by-Game Report: {game_date}")
+    st.subheader("Player belief profiles")
+    st.caption("Expandable cards. Summary first, raw fan voice only when you want it.")
 
-    g = df[df["game_date"] == game_date].copy()
-    out = deterministic_game_narrative(g)
+    total = max(len(f), 1)
+    player_mentions = player_mention_counts_unique(f)
+    # sort by comment-mention count desc
+    players_sorted = sorted(player_mentions.items(), key=lambda x: x[1], reverse=True)
 
-    st.markdown("### Narrative summary (deterministic)")
-    for b in out["bullets"]:
-        st.write(f"- {b}")
+    if not players_sorted or players_sorted[0][1] == 0:
+        st.info("No player mentions found with current deterministic rules.")
+    else:
+        # Show top players first
+        top_n = st.slider("How many players to show", min_value=4, max_value=min(18, len(players_sorted)), value=min(8, len(players_sorted)))
+        for player, mention_ct in players_sorted[:top_n]:
+            if mention_ct == 0:
+                continue
 
-    st.metric("Heat score (deterministic)", out["heat_score"])
+            split = player_sentiment_split(f, player)
+            pos = int(split.get("positive", 0))
+            mixed = int(split.get("mixed", 0))
+            neg = int(split.get("negative", 0))
+            neu = int(split.get("neutral", 0))
 
-    st.markdown("### Top themes (game)")
-    tc = out["themes_all"]
-    st.dataframe(pd.DataFrame(tc.most_common(20), columns=["theme", "hits"]), use_container_width=True)
+            with st.expander(f"{player}  |  {mention_ct} comments mentioning  |  {pct(mention_ct, total)}% of thread"):
+                # Minimal, visual summary without noisy charts
+                a, b, c, d = st.columns(4)
+                a.metric("Positive", pos)
+                b.metric("Mixed", mixed)
+                c.metric("Negative", neg)
+                d.metric("Neutral", neu)
 
-    st.markdown("### Top player mentions (game)")
-    pc = out["players_all"]
-    st.dataframe(pd.DataFrame(pc.most_common(20), columns=["player", "mentions"]), use_container_width=True)
+                # Deterministic signal line
+                signal_parts = []
+                if mention_ct >= int(0.25 * total):
+                    signal_parts.append("High narrative concentration")
+                if neg == 0 and pos >= 3:
+                    signal_parts.append("Zero negative detected (rare)")
+                if neg >= max(6, pos * 2):
+                    signal_parts.append("Negative outweighs positive")
+                if not signal_parts:
+                    signal_parts.append("Mixed or low-signal conversation")
 
-    st.markdown("### Fan quotes (top upvoted)")
-    st.dataframe(out["fan_quotes"], use_container_width=True)
+                st.markdown(f"**Signal:** {'. '.join(signal_parts)}.")
+
+                # Representative comments
+                pats = PLAYERS.get(player, [])
+                pmask = f["body"].apply(lambda t: comment_hits_any_patterns(t, pats))
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**Top upvoted comments**")
+                    st.dataframe(top_comments(f, pmask, limit=10), use_container_width=True, hide_index=True)
+                with c2:
+                    st.markdown("**Top negative or mixed (by score)**")
+                    pm = f[pmask].copy()
+                    pm = pm[pm["sentiment"].isin(["negative", "mixed"])].copy()
+                    if pm.empty:
+                        st.info("No negative or mixed comments detected for this player (with current heuristics).")
+                    else:
+                        cols = [c for c in ["game_date", "thread_type", "author", "score_num", "sentiment", "body"] if c in pm.columns]
+                        pm = pm.sort_values("score_num", ascending=False)[cols].head(10).rename(columns={"score_num": "score"})
+                        st.dataframe(pm, use_container_width=True, hide_index=True)
 
 
 # -----------------------------
-# Weekly Report tab
+# Tab 3: Fan Psychology
 # -----------------------------
 with tabs[2]:
-    st.subheader("Weekly Report (date range)")
+    st.subheader("Fan psychology indicators")
+    st.caption("This is where you capture reframing, trust, and reputational risk.")
+
+    total_comments = len(f)
+    heat = heat_score(f)
+    decouple = win_loss_decoupling_pct(f)
+    anchor = find_emotional_anchor(f)
+    loyalty = brand_loyalty_state(f, anchor)
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("Heat score", heat)
+    r2.metric("Win/Loss decoupling", f"{decouple}%")
+    r3.metric("Emotional anchor", anchor or "None detected")
+    r4.metric("Brand loyalty state", loyalty)
+
+    st.markdown("---")
+
+    # Win/Loss decoupling quote carousel (simple: show top comments matching patterns)
+    st.subheader("Win/Loss decoupling signals")
+    st.caption("Comments explicitly reframing losing as acceptable or desirable.")
+
+    dmask = f["body"].apply(lambda t: comment_hits_any_patterns(t, WIN_LOSS_DECOUPLING))
+    dquotes = top_comments(f, dmask, limit=12)
+    if dquotes.empty:
+        st.info("No win/loss decoupling comments detected with current patterns.")
+    else:
+        st.dataframe(dquotes, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Organizational distrust
+    st.subheader("Organizational distrust signals")
+    st.caption("Deterministic keyword-based read. Useful as a directional flag.")
+
+    omask = f["body"].apply(lambda t: comment_hits_any_patterns(t, ORG_DISTRUST))
+    distrust_pct = round(omask.mean() * 100.0, 1) if len(f) else 0.0
+
+    c1, c2 = st.columns([0.6, 1.4])
+    with c1:
+        st.metric("Distrust share", f"{distrust_pct}%")
+        if distrust_pct >= 10:
+            st.markdown("**Interpretation:** elevated distrust risk.")
+        elif distrust_pct >= 5:
+            st.markdown("**Interpretation:** meaningful distrust presence.")
+        else:
+            st.markdown("**Interpretation:** low-to-moderate distrust presence.")
+    with c2:
+        oquotes = top_comments(f, omask, limit=12)
+        if oquotes.empty:
+            st.info("No organizational distrust comments detected with current patterns.")
+        else:
+            st.dataframe(oquotes, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Risk vs opportunity framing (executive language, deterministic)
+    st.subheader("Narrative risk vs opportunity")
+    risks = []
+    opps = []
+
+    # Simple, deterministic triggers
+    if distrust_pct >= 6:
+        risks.append("Organizational distrust is present at meaningful volume.")
+    if anchor is None:
+        risks.append("No clear emotional anchor player detected in this slice (risk of disengagement).")
+
+    # Belief-driven opportunities
+    bc = belief_counts(f)
+    if bc.get("Build around Matas / youth", 0) > 0:
+        opps.append("Fans are open to development-forward messaging when growth is visible.")
+    if decouple >= 8:
+        opps.append("Loss tolerance is higher when the narrative is about future value, not wins.")
+
+    # fallback
+    if not risks:
+        risks.append("No major deterministic risk flags triggered in this slice.")
+    if not opps:
+        opps.append("No major deterministic opportunity flags triggered in this slice.")
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Risks**")
+        for r in risks:
+            st.write(f"- {r}")
+    with right:
+        st.markdown("**Opportunities**")
+        for o in opps:
+            st.write(f"- {o}")
+
+
+# -----------------------------
+# Tab 4: Narrative Trends (multi-game)
+# -----------------------------
+with tabs[3]:
+    st.subheader("Narrative trends")
+    st.caption("Compare belief movement across a selected date range. Momentum is deterministic ↑ → ↓.")
 
     # Parse available dates
     date_objs: List[date] = []
@@ -478,18 +786,17 @@ with tabs[2]:
 
     min_d, max_d = min(date_objs), max(date_objs)
 
-    # Streamlit can return a tuple here depending on version
     picked = st.date_input(
         "Select date range",
         value=(min_d, max_d),
         min_value=min_d,
         max_value=max_d,
+        key="trend_range",
     )
 
     if isinstance(picked, (tuple, list)) and len(picked) == 2:
         start_d, end_d = picked
     else:
-        # fallback if streamlit returns a single date
         start_d, end_d = min_d, max_d
 
     weekly = df.copy()
@@ -498,51 +805,85 @@ with tabs[2]:
 
     games_included = sorted([d for d in weekly["game_date"].dropna().unique().tolist() if d and d != "None"])
 
-    st.write(f"- Games included: **{len(games_included)}**")
-    st.write(f"- Total comments: **{len(weekly)}**")
+    a, b, c = st.columns(3)
+    a.metric("Games included", len(games_included))
+    b.metric("Total comments", len(weekly))
+    b.metric("Unique authors", int(weekly["author"].nunique(dropna=True)))
+    c.metric("Heat score (range)", heat_score(weekly))
 
-    st.markdown("### Overall tone (heuristic)")
-    sent_all = weekly["sentiment"].value_counts()
-    sent_all_df = sent_all.rename_axis("sentiment").reset_index(name="count")
-    st.dataframe(sent_all_df, use_container_width=True)
+    if weekly.empty:
+        st.info("No data in this date range.")
+        st.stop()
 
-    st.markdown("### Top themes (overall)")
-    tc = theme_counts_for_df(weekly)
-    st.dataframe(pd.DataFrame(tc.most_common(20), columns=["theme", "hits"]), use_container_width=True)
+    st.markdown("---")
 
-    st.markdown("### Top player mentions (overall)")
-    pc = player_counts_for_df(weekly)
-    st.dataframe(pd.DataFrame(pc.most_common(20), columns=["player", "mentions"]), use_container_width=True)
+    # Baseline for momentum: first half vs second half of selected range (by date order)
+    games_sorted = sorted(games_included)
+    if len(games_sorted) >= 2:
+        mid = max(1, len(games_sorted) // 2)
+        prior_games = set(games_sorted[:mid])
+        current_games = set(games_sorted[mid:])
+        prior = weekly[weekly["game_date"].isin(prior_games)].copy()
+        current = weekly[weekly["game_date"].isin(current_games)].copy()
 
-    st.markdown("### Theme drill-down (weekly)")
-    theme_table_w = theme_kpi_table(weekly)
-    if not theme_table_w.empty:
-        st.dataframe(theme_table_w, use_container_width=True)
-        theme_pick_w = st.selectbox("Select a theme (weekly)", options=theme_table_w["theme"].tolist(), key="theme_weekly")
+        st.markdown("### Belief momentum (second half vs first half)")
+        bt = belief_table_with_momentum(current, compare_subset=prior)
+        if bt.empty:
+            st.info("No belief themes detected in the selected range with current dictionaries.")
+        else:
+            st.dataframe(bt, use_container_width=True, hide_index=True)
+            st.caption("Momentum compares the second half of the selected range to the first half.")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("#### Top upvoted comments (weekly, theme)")
-            st.dataframe(top_comments_for_theme(weekly, theme_pick_w, limit=25), use_container_width=True)
-        with c2:
-            st.markdown("#### Most negative comments (weekly, theme)")
-            st.dataframe(most_negative_for_theme(weekly, theme_pick_w, limit=25), use_container_width=True)
+        st.markdown("---")
 
-    st.markdown("### Game summaries (deterministic bullets)")
-    for gd in games_included:
-        st.markdown(f"#### {gd}")
-        out = deterministic_game_narrative(weekly[weekly["game_date"] == gd].copy())
-        for b in out["bullets"]:
-            st.write(f"- {b}")
+    st.markdown("### Game-by-game: dominant belief + anchor")
+    rows = []
+    for gd in games_sorted:
+        g = weekly[weekly["game_date"] == gd].copy()
+        anchor = find_emotional_anchor(g)
+        bc = belief_counts(g)
+        dom = bc.most_common(1)[0][0] if bc else "None"
+        rows.append(
+            {
+                "game_date": gd,
+                "dominant_belief": dom,
+                "emotional_anchor": anchor or "None",
+                "win_loss_decouple_%": win_loss_decoupling_pct(g),
+                "heat": heat_score(g),
+                "comments": len(g),
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    st.markdown("### Drill down: pick a belief theme across the range")
+    belief_options = list(BELIEF_THEMES.keys())
+    pick_belief = st.selectbox("Belief theme", options=belief_options, key="trend_belief_pick")
+    pats = BELIEF_THEMES[pick_belief]["patterns"]
+    mask = weekly["body"].apply(lambda t: comment_hits_any_patterns(t, pats))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Top upvoted comments (range)**")
+        st.dataframe(top_comments(weekly, mask, limit=15), use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("**Most negative or mixed (range, by score)**")
+        x = weekly[mask].copy()
+        x = x[x["sentiment"].isin(["negative", "mixed"])].copy()
+        if x.empty:
+            st.info("No negative or mixed comments detected for this belief theme (with current heuristics).")
+        else:
+            cols = [c for c in ["game_date", "thread_type", "author", "score_num", "sentiment", "body"] if c in x.columns]
+            x = x.sort_values("score_num", ascending=False)[cols].head(15).rename(columns={"score_num": "score"})
+            st.dataframe(x, use_container_width=True, hide_index=True)
 
 
 # -----------------------------
-# Raw Data tab
+# Tab 5: Raw Data
 # -----------------------------
-with tabs[3]:
-    st.subheader("Raw Data (filtered)")
-    # Avoid pyarrow issues with duplicate col names
-    safe_f = f.copy()
-    safe_f = _ensure_no_duplicate_columns(safe_f)
-    st.dataframe(safe_f, use_container_width=True)
+with tabs[4]:
+    st.subheader("Raw data (filtered)")
+    st.caption("Use this for debugging dictionaries and validating edge cases.")
+    st.dataframe(safe_table(f), use_container_width=True)
 

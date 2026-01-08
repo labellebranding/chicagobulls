@@ -1,5 +1,14 @@
 # app.py
 # Bulls Fan Belief Intelligence (Deterministic rules only)
+#
+# UI/UX goals (per your notes)
+# - Light theme (white background), Bulls red + black accents
+# - Executive KPI strip + clear interpretation text
+# - Drill-down into themes with top upvoted + most negative comments
+# - Searchable Definitions tab + hover tooltips (toggle)
+# - NO identifying data (author/usernames) anywhere except Raw Data tab
+# - "score" is treated as UPVOTES and displayed as "score (upvotes)"
+# - Keep your original “Game-by-Game Report” + “Weekly Report” + “Raw Data” structure
 
 import re
 from collections import Counter
@@ -9,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
-# Optional Altair (nice charts). App still works without it.
+# Optional charting (nice-to-have). App works without.
 try:
     import altair as alt
     ALTAIR_OK = True
@@ -19,60 +28,138 @@ except Exception:
 
 
 # =============================
-# Page config + Bulls theme
+# Page config + Light Bulls theme
 # =============================
 st.set_page_config(page_title="Bulls Fan Belief Intelligence", layout="wide")
 
 BULLS_RED = "#CE1141"
 BULLS_BLACK = "#0B0B0B"
-BULLS_DARK = "#111214"
-BULLS_BORDER = "rgba(255,255,255,0.10)"
-BULLS_TEXT = "rgba(255,255,255,0.92)"
-BULLS_MUTED = "rgba(255,255,255,0.70)"
+TEXT = "#111827"          # near-black
+MUTED = "#6B7280"         # gray
+BORDER = "#E5E7EB"        # light gray
+BG = "#FFFFFF"
+SOFT_BG = "#F9FAFB"       # very light gray
 
 st.markdown(
     f"""
 <style>
+/* Global */
 .stApp {{
-  background: radial-gradient(1200px 800px at 18% 0%, rgba(206,17,65,0.14), transparent 60%),
-              radial-gradient(900px 600px at 100% 22%, rgba(206,17,65,0.10), transparent 55%),
-              {BULLS_BLACK};
-  color: {BULLS_TEXT};
+  background: {BG};
+  color: {TEXT};
 }}
-.block-container {{ padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1400px; }}
-h1, h2, h3 {{ letter-spacing: -0.02em; }}
-h1 {{ font-weight: 800; }}
+.block-container {{
+  padding-top: 1.1rem;
+  padding-bottom: 2rem;
+  max-width: 1400px;
+}}
+/* Headings */
+h1, h2, h3 {{ letter-spacing: -0.02em; color: {BULLS_BLACK}; }}
+h1 {{ font-weight: 850; }}
 h1::after {{
-  content: ""; display: block; height: 3px; width: 78px; margin-top: 10px;
-  border-radius: 999px; background: {BULLS_RED}; opacity: 0.95;
+  content: "";
+  display: block;
+  height: 4px;
+  width: 92px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: {BULLS_RED};
+  opacity: 0.95;
 }}
-.stCaption {{ color: {BULLS_MUTED}; }}
+/* Caption */
+.stCaption {{
+  color: {MUTED};
+}}
 
+/* Sidebar */
 section[data-testid="stSidebar"] > div {{
-  background: linear-gradient(180deg, {BULLS_DARK}, {BULLS_BLACK});
-  border-right: 1px solid {BULLS_BORDER};
+  background: {SOFT_BG};
+  border-right: 1px solid {BORDER};
 }}
 
+/* Inputs */
+div[data-baseweb="select"] > div {{
+  background: {BG} !important;
+  border: 1px solid {BORDER} !important;
+}}
+input, textarea {{
+  color: {TEXT} !important;
+}}
+
+/* Tabs accent */
+button[data-baseweb="tab"] {{
+  color: {MUTED};
+}}
+button[data-baseweb="tab"][aria-selected="true"] {{
+  color: {BULLS_BLACK};
+  border-bottom: 3px solid {BULLS_RED} !important;
+}}
+
+/* KPI cards */
+.kpi-grid {{
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}}
+@media (max-width: 1200px) {{
+  .kpi-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+}}
+@media (max-width: 700px) {{
+  .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+}}
 .kpi-card {{
-  background: rgba(255,255,255,0.03);
-  border: 1px solid {BULLS_BORDER};
+  background: {BG};
+  border: 1px solid {BORDER};
   border-radius: 14px;
   padding: 12px 14px;
-  box-shadow: 0 10px 24px rgba(0,0,0,0.18);
+  box-shadow: 0 10px 20px rgba(17,24,39,0.06);
 }}
-.kpi-label {{ font-size: 0.92rem; color: {BULLS_MUTED}; display: flex; gap: 8px; align-items: center; }}
-.kpi-value {{ font-size: 1.65rem; font-weight: 750; margin-top: 2px; }}
-.kpi-sub {{ font-size: 0.82rem; color: {BULLS_MUTED}; margin-top: 4px; line-height: 1.25; }}
+.kpi-label {{
+  font-size: 0.9rem;
+  color: {MUTED};
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}}
+.kpi-value {{
+  font-size: 1.55rem;
+  font-weight: 800;
+  margin-top: 3px;
+  color: {BULLS_BLACK};
+}}
+.kpi-sub {{
+  font-size: 0.82rem;
+  color: {MUTED};
+  margin-top: 4px;
+  line-height: 1.25;
+}}
 .pill {{
-  display: inline-block; padding: 2px 8px; border-radius: 999px;
-  border: 1px solid rgba(206,17,65,0.35); background: rgba(206,17,65,0.12);
-  font-size: 0.78rem; color: rgba(255,255,255,0.88);
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(206,17,65,0.25);
+  background: rgba(206,17,65,0.08);
+  font-size: 0.78rem;
+  color: {BULLS_BLACK};
 }}
 
-[data-testid="stDataFrame"] {{ border-radius: 14px; overflow: hidden; border: 1px solid {BULLS_BORDER}; }}
-button[data-baseweb="tab"] {{ color: {BULLS_MUTED}; }}
-button[data-baseweb="tab"][aria-selected="true"] {{ color: {BULLS_TEXT}; border-bottom: 2px solid {BULLS_RED} !important; }}
+/* Dataframes */
+[data-testid="stDataFrame"] {{
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid {BORDER};
+}}
+
+/* Links */
 a {{ color: {BULLS_RED} !important; }}
+
+/* Subtle section card */
+.section-card {{
+  background: {SOFT_BG};
+  border: 1px solid {BORDER};
+  border-radius: 14px;
+  padding: 14px 14px;
+}}
 </style>
 """,
     unsafe_allow_html=True,
@@ -80,74 +167,85 @@ a {{ color: {BULLS_RED} !important; }}
 
 
 # =============================
-# KPI definitions (tooltips + Definitions tab)
+# KPI Definitions (hover + searchable tab)
 # =============================
 KPI_DEFINITIONS = {
-    "Dominant belief theme": {
-        "definition": "Most frequently detected outcome-independent fan narrative in the selected slice.",
-        "how_calculated": "Count comments matching each belief theme’s patterns; select the highest.",
-        "why_it_matters": "Shows what fans repeat and believe, not just how they feel.",
-        "notes": "Deterministic keyword rules in BELIEF_THEMES.",
-    },
-    "Emotional anchor player": {
-        "definition": "Player acting as the strongest positive emotional focal point of conversation.",
-        "how_calculated": "Among players with meaningful mention volume, compute a weighted score from sentiment split + mentions; highest wins.",
-        "why_it_matters": "Anchors stabilize the narrative and give comms something to build around.",
-        "notes": "Deterministic heuristic. Tune weights if needed.",
-    },
-    "Win/Loss decoupling": {
-        "definition": "Share of comments reframing losing as acceptable or desirable (tanking, development over wins).",
-        "how_calculated": "Percent of comments matching WIN_LOSS_DECOUPLING patterns.",
-        "why_it_matters": "Signals fans redefining success criteria.",
-        "notes": "",
-    },
-    "Brand loyalty state": {
-        "definition": "Plain-English classification of investment vs distrust vs disengagement risk.",
-        "how_calculated": "Uses organizational distrust share plus presence of an emotional anchor player.",
-        "why_it_matters": "Summarizes volatility and retention risk in one line.",
-        "notes": "",
-    },
     "Heat score": {
-        "definition": "Directional indicator of reputational heat combining negativity and volume.",
+        "definition": "Directional pulse that combines negativity and volume.",
         "how_calculated": "Heat = (negative/total*100) + (total/60).",
-        "why_it_matters": "Quick pulse check for brand risk across games.",
-        "notes": "",
+        "why_it_matters": "Quickly flags reputational risk and volatility.",
+        "notes": "Simple by design so it stays comparable across games.",
     },
     "Comments": {
         "definition": "Total number of comments in the selected slice.",
         "how_calculated": "Row count after filters.",
-        "why_it_matters": "Volume = narrative importance.",
+        "why_it_matters": "Higher volume usually means the narrative matters more.",
         "notes": "",
     },
     "Unique commenters": {
         "definition": "Count of distinct commenters in the selected slice.",
-        "how_calculated": "Unique count of author values. Author is not shown on the dashboard.",
-        "why_it_matters": "Measures breadth of participation.",
-        "notes": "Usernames are only visible in Raw Data.",
+        "how_calculated": "Unique count of author values.",
+        "why_it_matters": "Breadth of participation (not just a few loud voices).",
+        "notes": "Usernames are hidden everywhere except Raw Data.",
+    },
+    "Neg %": {
+        "definition": "Percent of comments classified as negative (heuristic).",
+        "how_calculated": "negative / total * 100.",
+        "why_it_matters": "Adds tone context, but themes are the main layer.",
+        "notes": "Keyword heuristic via NEG_WORDS/POS_WORDS.",
+    },
+    "Live game": {
+        "definition": "Count of comments from live_game threads in the selected slice.",
+        "how_calculated": "thread_type == live_game",
+        "why_it_matters": "Real-time reactions, often more volatile.",
+        "notes": "",
+    },
+    "Postgame": {
+        "definition": "Count of comments from postgame threads in the selected slice.",
+        "how_calculated": "thread_type == postgame",
+        "why_it_matters": "Stabilized narrative after the outcome.",
+        "notes": "",
+    },
+    "Player mention frequency": {
+        "definition": "How many comments mention each player (comment-level presence).",
+        "how_calculated": "Counts comments that match the player’s name/aliases regex patterns.",
+        "why_it_matters": "Shows who the conversation centers on (not performance quality).",
+        "notes": "A comment can mention multiple players.",
+    },
+    "Theme hits": {
+        "definition": "How many comments match a theme’s patterns.",
+        "how_calculated": "Counts comments that match theme regex patterns.",
+        "why_it_matters": "Shows which narratives dominate.",
+        "notes": "A comment can match multiple themes.",
+    },
+    "Theme negative %": {
+        "definition": "Percent of theme-matching comments that are negative.",
+        "how_calculated": "Within theme hits, negative / hits * 100.",
+        "why_it_matters": "Separates ‘high volume’ themes from ‘high risk’ themes.",
+        "notes": "",
     },
     "Score (upvotes)": {
-        "definition": "The number of upvotes a comment received (as scraped).",
-        "how_calculated": "Loaded from the CSV score column; coerced to int.",
-        "why_it_matters": "Used to rank representative comments by agreement.",
+        "definition": "Number of upvotes a comment received (as scraped).",
+        "how_calculated": "CSV column score coerced to integer.",
+        "why_it_matters": "Used to rank representative comments by community agreement.",
         "notes": "Displayed as score (upvotes).",
     },
 }
-
 
 def _tooltip_text(term: str) -> str:
     meta = KPI_DEFINITIONS.get(term, {})
     if not meta:
         return ""
-    parts = [
-        meta.get("definition", "").strip(),
-        f"How: {meta.get('how_calculated','').strip()}".strip(),
-        f"Why: {meta.get('why_it_matters','').strip()}".strip(),
-    ]
-    notes = meta.get("notes", "").strip()
-    if notes:
-        parts.append(f"Notes: {notes}")
+    parts = []
+    if meta.get("definition"):
+        parts.append(meta["definition"].strip())
+    if meta.get("how_calculated"):
+        parts.append(f"How: {meta['how_calculated'].strip()}")
+    if meta.get("why_it_matters"):
+        parts.append(f"Why: {meta['why_it_matters'].strip()}")
+    if meta.get("notes"):
+        parts.append(f"Notes: {meta['notes'].strip()}")
     return "\n".join([p for p in parts if p])
-
 
 def _render_kpi_card(label: str, value: str, sub: str = "", help_term: Optional[str] = None, show_hover: bool = True):
     help_text = _tooltip_text(help_term or label) if show_hover else ""
@@ -163,7 +261,6 @@ def _render_kpi_card(label: str, value: str, sub: str = "", help_term: Optional[
 """,
         unsafe_allow_html=True,
     )
-
 
 def kpi_definitions_df() -> pd.DataFrame:
     rows = []
@@ -181,7 +278,7 @@ def kpi_definitions_df() -> pd.DataFrame:
 
 
 # =============================
-# Deterministic dictionaries
+# Deterministic dictionaries (edit freely)
 # =============================
 PLAYERS: Dict[str, List[str]] = {
     "Nikola Vucevic": [r"\bvooch\b", r"\bvucevic\b", r"\bvuc\b"],
@@ -194,31 +291,24 @@ PLAYERS: Dict[str, List[str]] = {
     "Billy Donovan": [r"\bbilly donovan\b", r"\bdonovan\b"],
 }
 
-BELIEF_THEMES: Dict[str, Dict] = {
-    "Build around Matas / youth": {
-        "patterns": [r"\bbuild around\b", r"\byouth\b", r"\bdevelopment\b", r"\brebuild\b", r"\bplay the kids\b", r"\bmatas\b", r"\bbuzelis\b", r"\bfuture\b", r"\bcore\b"],
-        "outcome_independent": True,
-    },
-    "Trade / move on from vets": {
-        "patterns": [r"\btrade\b", r"\bdeadline\b", r"\bmove on\b", r"\bblow it up\b", r"\btear it down\b", r"\bvets\b", r"\bget rid of\b", r"\bsell\b", r"\bvuc\b", r"\bvucevic\b"],
-        "outcome_independent": True,
-    },
-    "Team identity problem": {
-        "patterns": [r"\bidentity\b", r"\bwho are we\b", r"\bno identity\b", r"\bdirection\b", r"\bplan\b"],
-        "outcome_independent": True,
-    },
+THEMES: Dict[str, List[str]] = {
+    "injury": [r"\binjur", r"\bconcussion\b", r"\bprotocol\b", r"\bout\b", r"\bquestionable\b"],
+    "coaching": [r"\bcoach\b", r"\bcoaching\b", r"\blineup\b", r"\brotation\b", r"\btimeouts?\b", r"\bdonovan\b"],
+    "shooting": [r"\bshoot", r"\b3s\b", r"\bthrees\b", r"\bthree\b", r"\bbrick", r"\bfg\b", r"\bpercent\b"],
+    "refs": [r"\bref", r"\bwhistle\b", r"\bfoul\b", r"\bfree throw\b", r"\bft\b"],
+    "front_office": [r"\bfront office\b", r"\bakme\b", r"\bkarnisovas\b", r"\btrade\b", r"\bdeadline\b"],
+    "effort_identity": [r"\beffort\b", r"\bsoft\b", r"\bheart\b", r"\bidentity\b", r"\bvibes\b"],
+    "tanking": [r"\btank\b", r"\blottery\b", r"\bpicks?\b", r"\btop pick\b"],
 }
 
-WIN_LOSS_DECOUPLING: List[str] = [
-    r"\bethical tank\b", r"\btank win\b", r"\blottery odds\b", r"\btop pick\b", r"\btank\b", r"\blosing is fine\b"
+NEG_WORDS = [
+    r"\btrash\b", r"\bembarrass", r"\bawful\b", r"\bworst\b", r"\bpathetic\b",
+    r"\bpissed\b", r"\bfuck\b", r"\bgarbage\b", r"\bchoke\b", r"\bsucks?\b",
 ]
-
-ORG_DISTRUST: List[str] = [
-    r"\bfront office\b", r"\bakme\b", r"\bkarnisovas\b", r"\bownership\b", r"\breinsdorf\b", r"\bsell the team\b", r"\bno plan\b"
+POS_WORDS = [
+    r"\bgreat\b", r"\bamazing\b", r"\blove\b", r"\bwin\b", r"\bsolid\b",
+    r"\bproud\b", r"\bnice\b", r"\bclutch\b", r"\bballing\b",
 ]
-
-NEG_WORDS = [r"\btrash\b", r"\bawful\b", r"\bworst\b", r"\bpathetic\b", r"\bgarbage\b", r"\bsucks?\b"]
-POS_WORDS = [r"\bgreat\b", r"\bamazing\b", r"\blove\b", r"\bsolid\b", r"\bproud\b", r"\bclutch\b"]
 
 
 # =============================
@@ -226,9 +316,8 @@ POS_WORDS = [r"\bgreat\b", r"\bamazing\b", r"\blove\b", r"\bsolid\b", r"\bproud\
 # =============================
 FILENAME_RE = re.compile(
     r"(?P<game_date>\d{4}-\d{2}-\d{2})_(?P<thread_type>pregame|live_game|postgame|game)_(?P<thread_id>[a-z0-9]+)\.csv$",
-    re.I,
+    re.I
 )
-
 
 def normalize_thread_type(x: str) -> str:
     x = (x or "").strip().lower()
@@ -239,7 +328,6 @@ def normalize_thread_type(x: str) -> str:
     if x in ["pre", "pregame", "pre_game"]:
         return "pregame"
     return x or "unknown"
-
 
 def parse_filename_meta(name: str) -> Tuple[Optional[str], str, Optional[str]]:
     m = FILENAME_RE.search(name)
@@ -253,7 +341,6 @@ def parse_filename_meta(name: str) -> Tuple[Optional[str], str, Optional[str]]:
 # =============================
 def safe_text(x) -> str:
     return "" if pd.isna(x) else str(x)
-
 
 def _ensure_no_duplicate_columns(df_in: pd.DataFrame) -> pd.DataFrame:
     cols = list(df_in.columns)
@@ -269,7 +356,6 @@ def _ensure_no_duplicate_columns(df_in: pd.DataFrame) -> pd.DataFrame:
     df_in.columns = new_cols
     return df_in
 
-
 def classify_sentiment(text: str) -> str:
     txt = (text or "").lower()
     neg = any(re.search(p, txt, flags=re.I) for p in NEG_WORDS)
@@ -282,29 +368,176 @@ def classify_sentiment(text: str) -> str:
         return "positive"
     return "neutral"
 
-
 def comment_hits_any_patterns(text: str, pats: List[str]) -> bool:
     txt = text or ""
     return any(re.search(p, txt, flags=re.I) for p in pats)
 
+def comment_hits_theme(body: str, theme: str) -> bool:
+    return comment_hits_any_patterns(body, THEMES.get(theme, []))
 
 def pct(part: int, total: int) -> float:
     if total <= 0:
         return 0.0
     return round(100.0 * part / total, 1)
 
+def player_counts_for_df(df_subset: pd.DataFrame) -> Counter:
+    # Mentions (regex hit counts) to show “who is discussed most”
+    c = Counter()
+    bodies = df_subset["body"].astype(str).tolist()
+    for body in bodies:
+        for player, pats in PLAYERS.items():
+            hits = 0
+            for p in pats:
+                hits += len(re.findall(p, body, flags=re.I))
+            if hits:
+                c[player] += hits
+    return c
 
-@st.cache_data(show_spinner=False)
-def load_uploaded_csvs(file_bytes_and_names: List[Tuple[bytes, str]]) -> pd.DataFrame:
+def theme_counts_for_df(df_subset: pd.DataFrame) -> Counter:
+    c = Counter()
+    bodies = df_subset["body"].astype(str).tolist()
+    for body in bodies:
+        for theme, pats in THEMES.items():
+            if comment_hits_any_patterns(body, pats):
+                c[theme] += 1
+    return c
+
+def theme_kpi_table(df_subset: pd.DataFrame) -> pd.DataFrame:
+    total = max(len(df_subset), 1)
+    rows = []
+    for theme in THEMES.keys():
+        hit_mask = df_subset["body"].apply(lambda t: comment_hits_theme(t, theme))
+        hits = int(hit_mask.sum())
+        if hits == 0:
+            continue
+
+        sub = df_subset[hit_mask].copy()
+        neg_pct = round(100.0 * (sub["sentiment"] == "negative").mean(), 1)
+
+        live_hits = int((sub["thread_type"] == "live_game").sum())
+        post_hits = int((sub["thread_type"] == "postgame").sum())
+        spike = post_hits - live_hits
+
+        rows.append(
+            {
+                "theme": theme,
+                "hits": hits,
+                "share_%": round(100.0 * hits / total, 1),
+                "negative_%": neg_pct,
+                "live_hits": live_hits,
+                "post_hits": post_hits,
+                "post_minus_live": spike,
+            }
+        )
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.sort_values(["hits", "post_minus_live"], ascending=[False, False])
+
+def top_comments_for_theme(df_subset: pd.DataFrame, theme: str, limit: int = 25) -> pd.DataFrame:
+    x = df_subset.copy()
+    x["hits_theme"] = x["body"].apply(lambda t: comment_hits_theme(t, theme))
+    x = x[x["hits_theme"] == True].copy()
+
+    x["score_num"] = pd.to_numeric(x["score"], errors="coerce").fillna(0).astype(int)
+
+    # NO AUTHOR OUTSIDE RAW DATA
+    cols = [c for c in ["game_date", "thread_type", "score_num", "sentiment", "body"] if c in x.columns]
+    x = x.sort_values("score_num", ascending=False)[cols].head(limit)
+    return x.rename(columns={"score_num": "score (upvotes)"})
+
+def most_negative_for_theme(df_subset: pd.DataFrame, theme: str, limit: int = 25) -> pd.DataFrame:
+    x = df_subset.copy()
+    x["hits_theme"] = x["body"].apply(lambda t: comment_hits_theme(t, theme))
+    x = x[x["hits_theme"] == True].copy()
+    x = x[x["sentiment"].isin(["negative", "mixed"])].copy()
+
+    x["score_num"] = pd.to_numeric(x["score"], errors="coerce").fillna(0).astype(int)
+    cols = [c for c in ["game_date", "thread_type", "score_num", "sentiment", "body"] if c in x.columns]
+    x = x.sort_values("score_num", ascending=False)[cols].head(limit)
+    return x.rename(columns={"score_num": "score (upvotes)"})
+
+def heat_score(df_subset: pd.DataFrame) -> float:
+    total = max(len(df_subset), 1)
+    neg_ct = int((df_subset["sentiment"] == "negative").sum())
+    return round((neg_ct / total) * 100.0 + (len(df_subset) / 60.0), 1)
+
+def deterministic_game_narrative(g: pd.DataFrame) -> Dict:
+    bullets: List[str] = []
+    total_comments = len(g)
+
+    by_type = g.groupby("thread_type").size().to_dict()
+    live_ct = int(by_type.get("live_game", 0))
+    post_ct = int(by_type.get("postgame", 0))
+    pre_ct = int(by_type.get("pregame", 0))
+
+    s_all = Counter(g["sentiment"].astype(str).tolist())
+    neg = int(s_all.get("negative", 0))
+    pos = int(s_all.get("positive", 0))
+    neu = int(s_all.get("neutral", 0))
+    mix = int(s_all.get("mixed", 0))
+
+    bullets.append(f"Engagement: {total_comments} total comments (live {live_ct}, post {post_ct}, pre {pre_ct}).")
+    bullets.append(
+        f"Tone (heuristic): {pct(neg, total_comments)}% negative, {pct(mix, total_comments)}% mixed, "
+        f"{pct(neu, total_comments)}% neutral, {pct(pos, total_comments)}% positive."
+    )
+
+    if live_ct > 0 and post_ct > 0:
+        if post_ct > live_ct * 1.25:
+            bullets.append("Volume moved upward after the final: postgame discussion was meaningfully higher than live.")
+        elif live_ct > post_ct * 1.25:
+            bullets.append("Volume peaked during the game: live discussion was meaningfully higher than postgame.")
+        else:
+            bullets.append("Volume was steady: live and postgame discussion were in a similar range.")
+
+    themes_all = theme_counts_for_df(g)
+    top_themes = [k for k, _ in themes_all.most_common(4)]
+    if top_themes:
+        bullets.append("Top narratives: " + ", ".join(top_themes) + ".")
+
+    players_all = player_counts_for_df(g)
+    top_players = players_all.most_common(6)
+    if top_players:
+        bullets.append("Most discussed: " + ", ".join([f"{p} ({c})" for p, c in top_players[:3]]) + ".")
+
+    hs = heat_score(g)
+    if hs >= 70:
+        bullets.append("Heat level: HIGH. High negativity plus volume suggests elevated frustration / risk.")
+    elif hs >= 45:
+        bullets.append("Heat level: MODERATE. Noticeable criticism, but not a meltdown.")
+    else:
+        bullets.append("Heat level: LOW. Conversation was calmer or leaned neutral-to-positive.")
+
+    # Fan quotes: top upvoted (NO AUTHOR outside Raw Data)
+    fan_quotes = g.copy()
+    fan_quotes["score_num"] = pd.to_numeric(fan_quotes["score"], errors="coerce").fillna(0).astype(int)
+    fan_quotes = fan_quotes.sort_values("score_num", ascending=False).head(15)
+
+    cols = [c for c in ["game_date", "thread_type", "score_num", "sentiment", "body"] if c in fan_quotes.columns]
+    fan_quotes = fan_quotes[cols].rename(columns={"score_num": "score (upvotes)"})
+
+    return {
+        "bullets": bullets,
+        "heat_score": hs,
+        "themes_all": themes_all,
+        "players_all": players_all,
+        "sent_counts": s_all,
+        "fan_quotes": fan_quotes,
+    }
+
+def load_uploaded_csvs(files) -> pd.DataFrame:
     all_rows = []
-    for content, name in file_bytes_and_names:
-        game_date_str, thread_type_from_name, thread_id_from_name = parse_filename_meta(name)
+    for f in files:
+        game_date_str, thread_type_from_name, thread_id_from_name = parse_filename_meta(f.name)
 
-        # Robust read_csv
+        # Robust read_csv (handles encoding oddities)
         try:
-            df = pd.read_csv(pd.io.common.BytesIO(content))
+            df = pd.read_csv(f)
         except Exception:
-            df = pd.read_csv(pd.io.common.BytesIO(content), encoding_errors="ignore")
+            f.seek(0)
+            df = pd.read_csv(f, encoding_errors="ignore")
 
         df = _ensure_no_duplicate_columns(df)
 
@@ -313,10 +546,10 @@ def load_uploaded_csvs(file_bytes_and_names: List[Tuple[bytes, str]]) -> pd.Data
             if col not in df.columns:
                 df[col] = None
 
-        # Normalize thread_type
+        # Normalize thread_type from file contents
         df["thread_type"] = df["thread_type"].apply(normalize_thread_type)
 
-        # Prefer filename meta
+        # Prefer filename meta if present
         if game_date_str:
             df["game_date"] = game_date_str
         df["game_date"] = df["game_date"].astype(str).str.slice(0, 10)
@@ -326,6 +559,7 @@ def load_uploaded_csvs(file_bytes_and_names: List[Tuple[bytes, str]]) -> pd.Data
         if thread_id_from_name:
             df["thread_id"] = thread_id_from_name
 
+        # Clean + enrich
         df["body"] = df["body"].apply(safe_text)
         df["sentiment"] = df["body"].apply(classify_sentiment)
 
@@ -342,175 +576,302 @@ def load_uploaded_csvs(file_bytes_and_names: List[Tuple[bytes, str]]) -> pd.Data
     return out
 
 
-def belief_counts(df_subset: pd.DataFrame) -> Counter:
-    c = Counter()
-    for body in df_subset["body"].astype(str).tolist():
-        for belief, meta in BELIEF_THEMES.items():
-            if comment_hits_any_patterns(body, meta["patterns"]):
-                c[belief] += 1
-    return c
-
-
-def player_mention_counts_unique(df_subset: pd.DataFrame) -> Dict[str, int]:
-    out = {}
-    for player, pats in PLAYERS.items():
-        mask = df_subset["body"].apply(lambda t: comment_hits_any_patterns(t, pats))
-        out[player] = int(mask.sum())
-    return out
-
-
-def heat_score(df_subset: pd.DataFrame) -> float:
-    total = max(len(df_subset), 1)
-    neg_ct = int((df_subset["sentiment"] == "negative").sum())
-    return round((neg_ct / total) * 100.0 + (len(df_subset) / 60.0), 1)
-
-
-def win_loss_decoupling_pct(df_subset: pd.DataFrame) -> float:
-    mask = df_subset["body"].apply(lambda t: comment_hits_any_patterns(t, WIN_LOSS_DECOUPLING))
-    return round(mask.mean() * 100.0, 1) if len(df_subset) else 0.0
-
-
-def top_comments_no_author(df_subset: pd.DataFrame, mask: pd.Series, limit: int = 12) -> pd.DataFrame:
-    x = df_subset[mask].copy().sort_values("score_num", ascending=False)
-    cols = [c for c in ["game_date", "thread_type", "score_num", "sentiment", "body"] if c in x.columns]
-    return x[cols].head(limit).rename(columns={"score_num": "score (upvotes)"})
-
-
-def render_player_bar(conc: pd.DataFrame):
-    if conc.empty:
-        st.info("No player mentions detected with current dictionaries.")
-        return
-
-    if ALTAIR_OK:
-        chart = (
-            alt.Chart(conc)
-            .mark_bar(color=BULLS_RED)
-            .encode(
-                x=alt.X("comments_mentioning:Q", title="Comments mentioning"),
-                y=alt.Y("player:N", sort="-x", title=""),
-                tooltip=["player", "comments_mentioning", "share_%"],
-            )
-            .properties(height=320)
-        )
-        st.altair_chart(chart, use_container_width=True)
-    else:
-        st.warning("Altair not available. Using Streamlit default chart. (Add altair to requirements.txt to enable Bulls-red bars.)")
-        st.bar_chart(conc.set_index("player")[["comments_mentioning"]], height=320)
-
-
 # =============================
-# UI
+# UI Header
 # =============================
 st.title("Bulls Fan Belief Intelligence")
-st.caption("Deterministic rules only. Usernames are hidden everywhere except Raw Data. Score = upvotes.")
+st.caption(
+    "Deterministic rules only. Built to surface what fans repeat and believe. "
+    "Usernames are hidden everywhere except Raw Data. Score = upvotes."
+)
 
-st.sidebar.header("Data pull (objective)")
-with st.sidebar.expander("Checklist", expanded=True):
+# =============================
+# Sidebar: objective data pull guidance
+# =============================
+st.sidebar.header("Data pull")
+with st.sidebar.expander("Objective checklist (recommended)", expanded=True):
     st.markdown(
         """
-- Upload one CSV per thread (pregame, live_game, postgame).
-- Best filename format: `YYYY-MM-DD_postgame_THREADID.csv` (date + thread type + id)
-- Required column: `body`
-- Recommended: `score` (upvotes), `thread_type`
-- Optional: `author` (only used for unique commenter count; shown only in Raw Data)
+**Upload format**
+- One CSV per thread type (pregame, live_game, postgame)
+
+**Best filename format**
+- `YYYY-MM-DD_live_game_THREADID.csv`
+- `YYYY-MM-DD_postgame_THREADID.csv`
+- `YYYY-MM-DD_pregame_THREADID.csv`
+
+**Required**
+- `body` column (comment text)
+
+**Recommended**
+- `score` column (upvotes)
+- `thread_type` column (or rely on filename)
+
+**Optional**
+- `author` column (only used for unique commenter count; shown only in Raw Data)
 """
     )
 
 show_hover = st.sidebar.toggle("Enable hover tooltips", value=True)
-debug = st.sidebar.toggle("Debug mode", value=False)
+debug_mode = st.sidebar.toggle("Debug mode", value=False)
 
+st.sidebar.header("Upload")
 uploaded = st.sidebar.file_uploader("Upload CSVs", type=["csv"], accept_multiple_files=True)
 if not uploaded:
     st.info("Upload your thread CSV files to start.")
     st.stop()
 
-file_bytes_and_names = [(u.getvalue(), u.name) for u in uploaded]
-df = load_uploaded_csvs(file_bytes_and_names)
+df = load_uploaded_csvs(uploaded)
 if df.empty:
-    st.error("No rows found. Confirm your CSVs contain rows and include a 'body' column.")
+    st.error("No rows found. Confirm your CSVs contain comment rows and include a 'body' column.")
     st.stop()
 
-# Debug block (shows what Streamlit sees)
-if debug:
+if debug_mode:
     st.sidebar.markdown("### Debug")
     st.sidebar.write("Altair OK:", ALTAIR_OK)
     st.sidebar.write("Columns:", list(df.columns))
-    st.sidebar.write("Sample game_date values:", sorted(df["game_date"].dropna().unique().tolist())[:10])
-    st.sidebar.write("Sample thread_type values:", sorted(df["thread_type"].dropna().unique().tolist()))
+    st.sidebar.write("Unique thread_type:", sorted(df["thread_type"].dropna().unique().tolist())[:10])
+    st.sidebar.write("Sample game_date:", sorted(df["game_date"].dropna().unique().tolist())[:10])
 
+# =============================
+# Filters
+# =============================
 st.sidebar.header("Filters")
-all_dates = sorted([d for d in df["game_date"].dropna().unique().tolist() if d and d != "None" and re.match(r"^\d{4}-\d{2}-\d{2}$", d)])
+
+all_dates = sorted([d for d in df["game_date"].dropna().unique().tolist() if re.match(r"^\d{4}-\d{2}-\d{2}$", str(d))])
 if not all_dates:
-    st.error("No valid game_date values found. Make sure filenames include YYYY-MM-DD, or add a game_date column in CSV.")
+    st.error("No valid game_date values detected. Use the filename format YYYY-MM-DD_* or include game_date in the CSV.")
     st.stop()
 
-selected_game_date = st.sidebar.selectbox("Game", options=all_dates, index=len(all_dates) - 1)
-thread_types = ["pregame", "live_game", "postgame"]
-selected_types = st.sidebar.multiselect("Thread types", options=thread_types, default=thread_types)
-q = st.sidebar.text_input("Search (optional)", value="").strip().lower()
+default_idx = len(all_dates) - 1
+game_date = st.sidebar.selectbox("Game date", options=all_dates, index=default_idx)
 
-f = df[(df["game_date"] == selected_game_date) & (df["thread_type"].isin(selected_types))].copy()
+thread_types = ["pregame", "live_game", "postgame"]
+type_filter = st.sidebar.multiselect("Thread types", options=thread_types, default=thread_types)
+
+st.sidebar.markdown("### Search")
+q = st.sidebar.text_input("Search comment text (contains)", value="").strip().lower()
+
+f = df[(df["game_date"] == game_date) & (df["thread_type"].isin(type_filter))].copy()
 if q:
     f = f[f["body"].str.lower().str.contains(re.escape(q), na=False)].copy()
 
 if f.empty:
-    st.warning("No comments match the current filters.")
+    st.warning("No comments match your filters.")
     st.stop()
 
-tabs = st.tabs(["Game Snapshot", "Definitions", "Raw Data"])
+tabs = st.tabs(["Dashboard", "Game-by-Game Report", "Weekly Report", "Definitions", "Raw Data"])
 
+
+# =============================
+# Dashboard tab (keeps your data features)
+# =============================
 with tabs[0]:
+    st.subheader("Dashboard")
+
     total_comments = len(f)
-    unique_commenters = int(f["author"].nunique(dropna=True)) if "author" in f.columns else 0
-    neg_ct = int((f["sentiment"] == "negative").sum())
+    unique_authors = int(f["author"].nunique(dropna=True)) if "author" in f.columns else 0
+    live_ct = int((f["thread_type"] == "live_game").sum())
+    post_ct = int((f["thread_type"] == "postgame").sum())
 
-    belief_cts = belief_counts(f)
-    dominant_belief = belief_cts.most_common(1)[0][0] if belief_cts else "None detected"
-    decouple = win_loss_decoupling_pct(f)
-    heat = heat_score(f)
+    sent_counts = f["sentiment"].value_counts()
+    neg_ct = int(sent_counts.get("negative", 0))
+    pos_ct = int(sent_counts.get("positive", 0))
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        _render_kpi_card("Dominant belief theme", dominant_belief, help_term="Dominant belief theme", show_hover=show_hover)
-    with c2:
-        _render_kpi_card("Heat score", str(heat), help_term="Heat score", show_hover=show_hover)
-    with c3:
-        _render_kpi_card("Comments", str(total_comments), help_term="Comments", show_hover=show_hover)
-    with c4:
-        _render_kpi_card("Win/Loss decoupling", f"{decouple}%", help_term="Win/Loss decoupling", show_hover=show_hover)
+    hs = heat_score(f)
+
+    st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
+    _render_kpi_card("Heat score", str(hs), "Higher = more risk/volatility.", help_term="Heat score", show_hover=show_hover)
+    _render_kpi_card("Comments", str(total_comments), "", help_term="Comments", show_hover=show_hover)
+    _render_kpi_card("Unique commenters", str(unique_authors), "Breadth of participation.", help_term="Unique commenters", show_hover=show_hover)
+    _render_kpi_card("Neg %", f"{pct(neg_ct, max(total_comments, 1))}%", "", help_term="Neg %", show_hover=show_hover)
+    _render_kpi_card("Live game", str(live_ct), "", help_term="Live game", show_hover=show_hover)
+    _render_kpi_card("Postgame", str(post_ct), "", help_term="Postgame", show_hover=show_hover)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
-    st.subheader("Narrative concentration")
-    st.caption("Counts comments mentioning each player (comment-level presence).")
 
-    conc_rows = []
-    mentions = player_mention_counts_unique(f)
-    for player, ct in mentions.items():
-        if ct:
-            conc_rows.append({"player": player, "comments_mentioning": ct, "share_%": pct(ct, max(len(f), 1))})
-    conc = pd.DataFrame(conc_rows).sort_values("comments_mentioning", ascending=False).head(10)
+    # Sentiment mix
+    st.markdown("### Tone mix (filtered)")
+    tone_df = sent_counts.rename_axis("tone").reset_index(name="count")
+    tone_df["share_%"] = tone_df.apply(lambda r: pct(int(r["count"]), max(total_comments, 1)), axis=1)
+    st.dataframe(tone_df, use_container_width=True, hide_index=True)
 
-    if conc.empty:
-        st.info("No player mentions detected with current dictionaries.")
+    st.markdown("---")
+
+    # Player leaderboard
+    st.markdown("### Player mention leaderboard (filtered)")
+    pc = player_counts_for_df(f)
+    pc_df = pd.DataFrame(pc.most_common(25), columns=["player", "mentions"])
+    if pc_df.empty:
+        st.info("No player mentions detected with the current player dictionary.")
     else:
-        left, right = st.columns([1.25, 0.75])
-        with left:
-            render_player_bar(conc)
-        with right:
-            st.dataframe(conc, use_container_width=True, hide_index=True)
+        if ALTAIR_OK:
+            top10 = pc_df.head(10)
+            chart = (
+                alt.Chart(top10)
+                .mark_bar(color=BULLS_RED)
+                .encode(
+                    x=alt.X("mentions:Q", title="Mentions"),
+                    y=alt.Y("player:N", sort="-x", title=""),
+                    tooltip=["player", "mentions"],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(chart, use_container_width=True)
+        st.dataframe(pc_df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.subheader("Representative comments (dominant belief)")
-    if dominant_belief != "None detected":
-        pats = BELIEF_THEMES[dominant_belief]["patterns"]
-        mask = f["body"].apply(lambda t: comment_hits_any_patterns(t, pats))
-        st.caption("Score = upvotes. Usernames are hidden.")
-        st.dataframe(top_comments_no_author(f, mask, limit=12), use_container_width=True, hide_index=True)
 
+    # Theme tracking + drill down
+    st.markdown("### Theme tracking (filtered)")
+    theme_table = theme_kpi_table(f)
+    if theme_table.empty:
+        st.info("No theme hits found with current deterministic rules.")
+    else:
+        st.dataframe(theme_table, use_container_width=True, hide_index=True)
+
+        st.markdown("### Theme drill-down (usernames hidden)")
+        theme_pick = st.selectbox("Select a theme", options=theme_table["theme"].tolist())
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Top upvoted comments (score = upvotes)")
+            st.dataframe(top_comments_for_theme(f, theme_pick, limit=25), use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown("#### Most negative comments (by score)")
+            st.dataframe(most_negative_for_theme(f, theme_pick, limit=25), use_container_width=True, hide_index=True)
+
+
+# =============================
+# Game-by-Game Report tab
+# =============================
 with tabs[1]:
+    st.subheader(f"Game-by-Game Report: {game_date}")
+
+    g = df[df["game_date"] == game_date].copy()
+    out = deterministic_game_narrative(g)
+
+    st.markdown("### Narrative summary (deterministic)")
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    for b in out["bullets"]:
+        st.write(f"- {b}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    st.markdown("### Heat score")
+    st.write(f"**{out['heat_score']}** (higher = more risk/volatility)")
+
+    st.markdown("---")
+
+    st.markdown("### Top themes (game)")
+    tc = out["themes_all"]
+    st.dataframe(pd.DataFrame(tc.most_common(20), columns=["theme", "hits"]), use_container_width=True, hide_index=True)
+
+    st.markdown("### Top player mentions (game)")
+    pc = out["players_all"]
+    st.dataframe(pd.DataFrame(pc.most_common(20), columns=["player", "mentions"]), use_container_width=True, hide_index=True)
+
+    st.markdown("### Fan quotes (top upvoted, usernames hidden)")
+    st.dataframe(out["fan_quotes"], use_container_width=True, hide_index=True)
+
+
+# =============================
+# Weekly Report tab (date range)
+# =============================
+with tabs[2]:
+    st.subheader("Weekly Report (date range)")
+
+    # Parse available dates
+    date_objs: List[date] = []
+    for d in all_dates:
+        try:
+            date_objs.append(datetime.strptime(d, "%Y-%m-%d").date())
+        except Exception:
+            pass
+
+    if not date_objs:
+        st.warning("Could not parse game_date values. Use YYYY-MM-DD in filenames or a game_date column.")
+        st.stop()
+
+    min_d, max_d = min(date_objs), max(date_objs)
+
+    picked = st.date_input(
+        "Select date range",
+        value=(min_d, max_d),
+        min_value=min_d,
+        max_value=max_d,
+    )
+
+    # Streamlit version safe handling
+    if isinstance(picked, (tuple, list)) and len(picked) == 2 and picked[0] and picked[1]:
+        start_d, end_d = picked
+    else:
+        start_d, end_d = min_d, max_d
+
+    weekly = df.copy()
+    weekly["game_date_obj"] = pd.to_datetime(weekly["game_date"], errors="coerce").dt.date
+    weekly = weekly[(weekly["game_date_obj"] >= start_d) & (weekly["game_date_obj"] <= end_d)].copy()
+
+    games_included = sorted([d for d in weekly["game_date"].dropna().unique().tolist() if re.match(r"^\d{4}-\d{2}-\d{2}$", str(d))])
+
+    st.write(f"- Games included: **{len(games_included)}**")
+    st.write(f"- Total comments: **{len(weekly)}**")
+
+    st.markdown("---")
+
+    st.markdown("### Overall tone (heuristic)")
+    sent_all = weekly["sentiment"].value_counts()
+    sent_all_df = sent_all.rename_axis("tone").reset_index(name="count")
+    sent_all_df["share_%"] = sent_all_df.apply(lambda r: pct(int(r["count"]), max(len(weekly), 1)), axis=1)
+    st.dataframe(sent_all_df, use_container_width=True, hide_index=True)
+
+    st.markdown("### Top themes (overall)")
+    tc = theme_counts_for_df(weekly)
+    st.dataframe(pd.DataFrame(tc.most_common(20), columns=["theme", "hits"]), use_container_width=True, hide_index=True)
+
+    st.markdown("### Top player mentions (overall)")
+    pc = player_counts_for_df(weekly)
+    st.dataframe(pd.DataFrame(pc.most_common(20), columns=["player", "mentions"]), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    st.markdown("### Theme drill-down (weekly, usernames hidden)")
+    theme_table_w = theme_kpi_table(weekly)
+    if theme_table_w.empty:
+        st.info("No theme hits found in this date range.")
+    else:
+        st.dataframe(theme_table_w, use_container_width=True, hide_index=True)
+        theme_pick_w = st.selectbox("Select a theme (weekly)", options=theme_table_w["theme"].tolist(), key="theme_weekly")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Top upvoted comments (weekly, score = upvotes)")
+            st.dataframe(top_comments_for_theme(weekly, theme_pick_w, limit=25), use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown("#### Most negative comments (weekly, by score)")
+            st.dataframe(most_negative_for_theme(weekly, theme_pick_w, limit=25), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    st.markdown("### Game summaries (deterministic bullets)")
+    for gd in games_included:
+        st.markdown(f"#### {gd}")
+        out_g = deterministic_game_narrative(weekly[weekly["game_date"] == gd].copy())
+        for b in out_g["bullets"]:
+            st.write(f"- {b}")
+
+
+# =============================
+# Definitions tab (searchable)
+# =============================
+with tabs[3]:
     st.subheader("Definitions")
+    st.caption("Search KPI terms. These definitions match the deterministic logic used in the app.")
+
     defs = kpi_definitions_df()
-    query = st.text_input("Search definitions", value="", placeholder="Try: heat, score, decoupling").strip().lower()
+    query = st.text_input("Search definitions", value="", placeholder="Try: heat, score, theme, negative").strip().lower()
+
     if query:
         m = (
             defs["term"].str.lower().str.contains(query, na=False)
@@ -522,10 +883,16 @@ with tabs[1]:
         defs_view = defs[m].copy()
     else:
         defs_view = defs.copy()
+
     st.dataframe(defs_view, use_container_width=True, hide_index=True)
 
-with tabs[2]:
+
+# =============================
+# Raw Data tab (author allowed only here)
+# =============================
+with tabs[4]:
     st.subheader("Raw Data")
     st.caption("Raw rows for validation. Usernames may appear here only.")
-    # Show everything here (including author), but nowhere else.
-    st.dataframe(_ensure_no_duplicate_columns(f.copy()), use_container_width=True)
+    safe_f = _ensure_no_duplicate_columns(f.copy())
+    st.dataframe(safe_f, use_container_width=True)
+

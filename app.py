@@ -3,7 +3,7 @@
 
 import re
 from collections import Counter
-from datetime import datetime, date
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -11,42 +11,42 @@ import streamlit as st
 
 
 # -----------------------------
-# Config
+# Page config
 # -----------------------------
 st.set_page_config(page_title="Bulls Reddit Narrative Dashboard", layout="wide")
+st.title("Bulls Reddit Narrative Dashboard (Deterministic)")
 
 
 # -----------------------------
 # Deterministic dictionaries
 # -----------------------------
-# Customize these whenever you want. This is the whole point: deterministic rules.
+# Customize these whenever you want.
 PLAYERS: Dict[str, List[str]] = {
     "Nikola Vucevic": [r"\bvooch\b", r"\bvucevic\b", r"\bvuc\b"],
     "Patrick Williams": [r"\bpwill\b", r"\bpatrick williams\b", r"\bpat\b"],
     "Coby White": [r"\bcoby\b", r"\bcoby white\b"],
     "Josh Giddey": [r"\bgiddey\b", r"\bjosh giddey\b"],
-    "Lonzo Ball": [r"\blonzo\b", r"\blonzo ball\b", r"\bball\b"],
+    "Lonzo Ball": [r"\blonzo\b", r"\blonzo ball\b"],
     "Ayo Dosunmu": [r"\bayo\b", r"\bdosunmu\b", r"\bayo dosunmu\b"],
     "Matas Buzelis": [r"\bmatas\b", r"\bbuzelis\b", r"\bmatas buzelis\b"],
-    "Billy Donovan": [r"\bdonovan\b", r"\bbilly\b", r"\bbilly donovan\b"],
-    # add more
+    "Billy Donovan": [r"\bbilly donovan\b", r"\bdonovan\b"],
+    # Add more
 }
 
 THEMES: Dict[str, List[str]] = {
-    "injury": [r"\binjur", r"\bconcussion\b", r"\bprotocol\b", r"\bout\b", r"\bquestionable\b"],
+    "injury": [r"\binjur", r"\bconcussion\b", r"\bprotocol\b", r"\bquestionable\b", r"\bout\b"],
     "coaching": [r"\bcoach\b", r"\bcoaching\b", r"\blineup\b", r"\brotation\b", r"\btimeouts?\b", r"\bdonovan\b"],
     "shooting": [r"\bshoot", r"\b3s\b", r"\bthrees\b", r"\bthree\b", r"\bbrick", r"\bfg\b", r"\bpercent\b"],
     "refs": [r"\bref", r"\bwhistle\b", r"\bfoul\b", r"\bfree throw\b", r"\bft\b"],
     "front_office": [r"\bfront office\b", r"\bfo\b", r"\bakme\b", r"\bkarnisovas\b", r"\btrade\b", r"\bdeadline\b"],
     "effort_identity": [r"\beffort\b", r"\bsoft\b", r"\bheart\b", r"\bidentity\b", r"\bvibes\b"],
     "tanking": [r"\btank\b", r"\blottery\b", r"\bpicks?\b", r"\btop pick\b"],
-    # add more
+    # Add more
 }
 
-# super simple sentiment heuristic
 NEG_WORDS = [
-    r"\btrash\b", r"\bembarrass", r"\bsoft\b", r"\bawful\b", r"\bbad\b", r"\bworst\b",
-    r"\bpissed\b", r"\bfuck\b", r"\blose\b", r"\bloser\b", r"\bpathetic\b",
+    r"\btrash\b", r"\bembarrass", r"\bsoft\b", r"\bawful\b", r"\bworst\b",
+    r"\bpissed\b", r"\bfuck\b", r"\bloser\b", r"\bpathetic\b",
 ]
 POS_WORDS = [
     r"\bgreat\b", r"\bgood\b", r"\bamazing\b", r"\blove\b", r"\bwin\b", r"\bsolid\b",
@@ -55,12 +55,14 @@ POS_WORDS = [
 
 
 # -----------------------------
-# Helpers
+# Filename parsing
 # -----------------------------
+# Expected: 2026-01-03_live_game_1q3aeit.csv
 FILENAME_RE = re.compile(
-    r"(?P<game_date>\d{4}-\d{2}-\d{2})_(?P<thread_type>pregame|live_game|postgame)_(?P<thread_id>[a-z0-9]+)\.csv",
-    re.I
+    r"(?P<game_date>\d{4}-\d{2}-\d{2})_(?P<thread_type>pregame|live_game|postgame)_(?P<thread_id>[a-z0-9]+)\.csv$",
+    re.I,
 )
+
 
 def normalize_thread_type(x: str) -> str:
     x = (x or "").strip().lower()
@@ -72,12 +74,9 @@ def normalize_thread_type(x: str) -> str:
         return "pregame"
     return x or "unknown"
 
+
 def parse_filename_meta(name: str) -> Tuple[Optional[str], str, Optional[str]]:
-    """
-    Returns (game_date_str, thread_type, thread_id) from filename if possible.
-    Example: 2026-01-03_live_game_1q3aeit.csv
-    """
-    m = FILENAME_RE.search(name)
+    m = FILENAME_RE.search(name or "")
     if not m:
         return None, "unknown", None
     gd = m.group("game_date")
@@ -85,12 +84,17 @@ def parse_filename_meta(name: str) -> Tuple[Optional[str], str, Optional[str]]:
     tid = m.group("thread_id")
     return gd, tt, tid
 
+
+# -----------------------------
+# Helpers
+# -----------------------------
 def safe_text(x) -> str:
     return "" if pd.isna(x) else str(x)
 
+
 def detect_mentions(text: str, patterns: Dict[str, List[str]]) -> Dict[str, int]:
-    txt = text.lower()
-    hits = {}
+    txt = (text or "").lower()
+    hits: Dict[str, int] = {}
     for label, pats in patterns.items():
         c = 0
         for p in pats:
@@ -99,8 +103,9 @@ def detect_mentions(text: str, patterns: Dict[str, List[str]]) -> Dict[str, int]
             hits[label] = c
     return hits
 
+
 def classify_sentiment(text: str) -> str:
-    txt = text.lower()
+    txt = (text or "").lower()
     neg = any(re.search(p, txt, flags=re.I) for p in NEG_WORDS)
     pos = any(re.search(p, txt, flags=re.I) for p in POS_WORDS)
     if neg and pos:
@@ -111,10 +116,12 @@ def classify_sentiment(text: str) -> str:
         return "positive"
     return "neutral"
 
+
 def pct(part: int, total: int) -> float:
     if total <= 0:
         return 0.0
     return round(100.0 * part / total, 1)
+
 
 def theme_counts_for_df(df_subset: pd.DataFrame) -> Counter:
     c = Counter()
@@ -124,6 +131,7 @@ def theme_counts_for_df(df_subset: pd.DataFrame) -> Counter:
             c[theme] += 1
     return c
 
+
 def player_counts_for_df(df_subset: pd.DataFrame) -> Counter:
     c = Counter()
     for body in df_subset["body"].astype(str).tolist():
@@ -131,6 +139,7 @@ def player_counts_for_df(df_subset: pd.DataFrame) -> Counter:
         for p, cnt in hits.items():
             c[p] += cnt
     return c
+
 
 def deterministic_game_narrative(g: pd.DataFrame) -> Dict:
     bullets: List[str] = []
@@ -185,13 +194,11 @@ def deterministic_game_narrative(g: pd.DataFrame) -> Dict:
 
             if int(biggest_post["post_minus_live"]) >= 10:
                 bullets.append(
-                    f"Postgame spike: '{biggest_post['theme']}' surged after the final "
-                    f"(postgame +{int(biggest_post['post_minus_live'])} vs live_game)."
+                    f"Postgame spike: '{biggest_post['theme']}' surged after the final (postgame +{int(biggest_post['post_minus_live'])} vs live_game)."
                 )
             if int(biggest_live["post_minus_live"]) <= -10:
                 bullets.append(
-                    f"Live-game spike: '{biggest_live['theme']}' dominated during the game "
-                    f"(live_game +{abs(int(biggest_live['post_minus_live']))} vs postgame)."
+                    f"Live-game spike: '{biggest_live['theme']}' dominated during the game (live_game +{abs(int(biggest_live['post_minus_live']))} vs postgame)."
                 )
 
     players_all = player_counts_for_df(g)
@@ -209,9 +216,9 @@ def deterministic_game_narrative(g: pd.DataFrame) -> Dict:
     else:
         bullets.append("Heat level: LOW. Conversation leaned neutral-to-positive or stayed relatively calm.")
 
-    fan_quotes = g.sort_values("score", ascending=False).head(10)
+    fan_quotes = g.sort_values("score", ascending=False).head(15)
     cols = [c for c in ["game_date", "thread_type", "author", "score", "body"] if c in fan_quotes.columns]
-    fan_quotes = fan_quotes[cols]
+    fan_quotes = fan_quotes[cols].copy()
 
     return {
         "bullets": bullets,
@@ -225,35 +232,45 @@ def deterministic_game_narrative(g: pd.DataFrame) -> Dict:
     }
 
 
+# -----------------------------
+# CSV Loading
+# -----------------------------
 def load_uploaded_csvs(files) -> pd.DataFrame:
     all_rows = []
     for f in files:
-        game_date_str, thread_type, thread_id = parse_filename_meta(f.name)
+        # Prefer filename meta
+        game_date_str, thread_type_from_name, thread_id_from_name = parse_filename_meta(f.name)
 
         df = pd.read_csv(f)
-        # Ensure required columns exist
-        for col in ["body", "author", "score", "created_utc", "comment_id", "thread_id", "thread_type"]:
+
+        # Ensure base columns exist
+        base_cols = ["comment_id", "thread_id", "thread_type", "created_utc", "author", "score", "body"]
+        for col in base_cols:
             if col not in df.columns:
                 df[col] = None
 
-        if "thread_type" in df.columns:
-            df["thread_type"] = df["thread_type"].apply(normalize_thread_type)
+        # Normalize existing thread_type values first
+        df["thread_type"] = df["thread_type"].apply(normalize_thread_type)
 
-        # Prefer filename thread_type/game_date if present
+        # Override with filename thread_type if recognized
+        if thread_type_from_name != "unknown":
+            df["thread_type"] = thread_type_from_name
+
+        # Override with filename thread_id if present
+        if thread_id_from_name:
+            df["thread_id"] = thread_id_from_name
+
+        # game_date: prefer filename, else attempt derive from created_utc date (fallback)
         if game_date_str:
             df["game_date"] = game_date_str
         else:
-            if "game_date" not in df.columns:
-                df["game_date"] = None
+            # fallback: use created_utc date
+            dt = pd.to_datetime(df["created_utc"], errors="coerce", utc=True)
+            df["game_date"] = dt.dt.date.astype(str)
 
-        df["thread_type"] = thread_type if thread_type != "unknown" else df["thread_type"]
-        df["thread_id"] = thread_id if thread_id else df["thread_id"]
-
-        # Sentiment
+        # Clean + derived fields
         df["body"] = df["body"].apply(safe_text)
         df["sentiment"] = df["body"].apply(classify_sentiment)
-
-        # Themes + players (counts per comment, later we aggregate)
         df["themes_hit"] = df["body"].apply(lambda t: list(detect_mentions(t, THEMES).keys()))
         df["players_hit"] = df["body"].apply(lambda t: list(detect_mentions(t, PLAYERS).keys()))
 
@@ -263,7 +280,10 @@ def load_uploaded_csvs(files) -> pd.DataFrame:
         return pd.DataFrame()
 
     out = pd.concat(all_rows, ignore_index=True)
-    # Normalize game_date to string YYYY-MM-DD when possible
+
+    # IMPORTANT: remove duplicate column names (fixes pyarrow/streamlit dataframe crash)
+    out = out.loc[:, ~out.columns.duplicated()].copy()
+
     out["game_date"] = out["game_date"].astype(str).str.slice(0, 10)
     return out
 
@@ -271,8 +291,6 @@ def load_uploaded_csvs(files) -> pd.DataFrame:
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Bulls Reddit Narrative Dashboard (Deterministic)")
-
 st.sidebar.header("Upload your comment CSVs")
 uploaded = st.sidebar.file_uploader(
     "Upload one or more files (comments_by_thread/*.csv)",
@@ -292,14 +310,19 @@ if df.empty:
 
 # Filters
 st.sidebar.header("Filters")
-all_dates = sorted([d for d in df["game_date"].unique().tolist() if d and d != "None"])
-default_date = all_dates[-1] if all_dates else None
+all_dates = sorted([d for d in df["game_date"].dropna().unique().tolist() if d and d != "None"])
+if not all_dates:
+    st.error("No game_date values found. Make sure filenames look like YYYY-MM-DD_live_game_THREADID.csv")
+    st.stop()
 
-game_date = st.sidebar.selectbox("Game date", options=all_dates, index=len(all_dates) - 1 if all_dates else 0)
+default_idx = max(0, len(all_dates) - 1)
+game_date = st.sidebar.selectbox("Game date", options=all_dates, index=default_idx)
+
 thread_types = ["pregame", "live_game", "postgame"]
 type_filter = st.sidebar.multiselect("Thread types", options=thread_types, default=thread_types)
 
 f = df[(df["game_date"] == game_date) & (df["thread_type"].isin(type_filter))].copy()
+f = f.loc[:, ~f.columns.duplicated()].copy()
 
 tabs = st.tabs(["Dashboard", "Game-by-Game Report", "Weekly Report", "Raw Data"])
 
@@ -312,7 +335,7 @@ with tabs[0]:
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Comments (filtered)", len(f))
-    col2.metric("Unique authors", f["author"].nunique(dropna=True))
+    col2.metric("Unique authors", int(f["author"].nunique(dropna=True)))
     col3.metric("Live game comments", int((f["thread_type"] == "live_game").sum()))
     col4.metric("Postgame comments", int((f["thread_type"] == "postgame").sum()))
 
@@ -320,16 +343,19 @@ with tabs[0]:
     sent = f["sentiment"].value_counts()
     sent_df = sent.reset_index()
     sent_df.columns = ["sentiment", "count"]
+    sent_df = sent_df.loc[:, ~sent_df.columns.duplicated()].copy()
     st.dataframe(sent_df, use_container_width=True)
 
     st.markdown("### Player mention leaderboard (filtered)")
     pc = player_counts_for_df(f)
-    pc_df = pd.DataFrame(pc.most_common(20), columns=["player", "mentions"])
+    pc_df = pd.DataFrame(pc.most_common(25), columns=["player", "mentions"])
+    pc_df = pc_df.loc[:, ~pc_df.columns.duplicated()].copy()
     st.dataframe(pc_df, use_container_width=True)
 
     st.markdown("### Theme tracking (filtered)")
     tc = theme_counts_for_df(f)
-    tc_df = pd.DataFrame(tc.most_common(20), columns=["theme", "hits"])
+    tc_df = pd.DataFrame(tc.most_common(25), columns=["theme", "hits"])
+    tc_df = tc_df.loc[:, ~tc_df.columns.duplicated()].copy()
     st.dataframe(tc_df, use_container_width=True)
 
 
@@ -349,22 +375,27 @@ with tabs[1]:
 
     if isinstance(out["theme_spikes"], pd.DataFrame) and len(out["theme_spikes"]) > 0:
         st.markdown("### Theme spikes (postgame vs live_game)")
-        st.dataframe(out["theme_spikes"].head(12), use_container_width=True)
+        spike_df = out["theme_spikes"].head(15).copy()
+        spike_df = spike_df.loc[:, ~spike_df.columns.duplicated()].copy()
+        st.dataframe(spike_df, use_container_width=True)
 
     st.markdown("### Player focus (mentions)")
-    st.dataframe(out["player_focus"], use_container_width=True)
+    pf = out["player_focus"].copy()
+    pf = pf.loc[:, ~pf.columns.duplicated()].copy()
+    st.dataframe(pf, use_container_width=True)
 
     st.markdown("### Fan quotes (top upvoted comments)")
-    st.dataframe(out["fan_quotes"], use_container_width=True)
+    fq = out["fan_quotes"].copy()
+    fq = fq.loc[:, ~fq.columns.duplicated()].copy()
+    st.dataframe(fq, use_container_width=True)
 
 
 # -----------------------------
-# Weekly Report (date range)
+# Weekly Report
 # -----------------------------
 with tabs[2]:
     st.subheader("Weekly Report (date range)")
 
-    # date range selection
     date_objs = []
     for d in all_dates:
         try:
@@ -373,35 +404,57 @@ with tabs[2]:
             pass
 
     if not date_objs:
-        st.warning("Could not parse game_date values. Make sure filenames look like YYYY-MM-DD_live_game_THREADID.csv")
+        st.warning("Could not parse game_date values. Check filenames for YYYY-MM-DD_...csv")
         st.stop()
 
     min_d, max_d = min(date_objs), max(date_objs)
-    start_d, end_d = st.date_input("Select date range", value=(min_d, max_d), min_value=min_d, max_value=max_d)
 
-    if isinstance(start_d, tuple) or isinstance(start_d, list):
-        # Streamlit sometimes returns tuple
-        start_d, end_d = start_d
+    # SAFE: Streamlit can return single date OR tuple(start,end)
+    picked = st.date_input(
+        "Select date range",
+        value=(min_d, max_d),
+        min_value=min_d,
+        max_value=max_d,
+    )
+
+    if isinstance(picked, (tuple, list)) and len(picked) == 2:
+        start_d, end_d = picked
+    else:
+        start_d = picked
+        end_d = picked
+
+    if start_d > end_d:
+        st.error("Start date must be on or before End date.")
+        st.stop()
 
     weekly = df.copy()
     weekly["game_date_obj"] = pd.to_datetime(weekly["game_date"], errors="coerce").dt.date
-    weekly = weekly[(weekly["game_date_obj"] >= start_d) & (weekly["game_date_obj"] <= end_d)]
+    weekly = weekly[(weekly["game_date_obj"] >= start_d) & (weekly["game_date_obj"] <= end_d)].copy()
+    weekly = weekly.loc[:, ~weekly.columns.duplicated()].copy()
 
-    games_included = sorted([d for d in weekly["game_date"].unique().tolist() if d and d != "None"])
+    games_included = sorted([d for d in weekly["game_date"].dropna().unique().tolist() if d and d != "None"])
     st.write(f"- Games included: **{len(games_included)}**")
     st.write(f"- Total comments: **{len(weekly)}**")
 
     sent_all = weekly["sentiment"].value_counts()
+    sent_all_df = sent_all.reset_index()
+    sent_all_df.columns = ["sentiment", "count"]  # FIX: avoid duplicate rename collisions
+    sent_all_df = sent_all_df.loc[:, ~sent_all_df.columns.duplicated()].copy()
+
     st.markdown("### Overall tone (heuristic)")
-    st.dataframe(sent_all.reset_index().rename(columns={"index": "sentiment", "sentiment": "count"}), use_container_width=True)
+    st.dataframe(sent_all_df, use_container_width=True)
 
     st.markdown("### Top themes (overall)")
     tc = theme_counts_for_df(weekly)
-    st.dataframe(pd.DataFrame(tc.most_common(20), columns=["theme", "hits"]), use_container_width=True)
+    tc_df = pd.DataFrame(tc.most_common(20), columns=["theme", "hits"])
+    tc_df = tc_df.loc[:, ~tc_df.columns.duplicated()].copy()
+    st.dataframe(tc_df, use_container_width=True)
 
     st.markdown("### Top player mentions (overall)")
     pc = player_counts_for_df(weekly)
-    st.dataframe(pd.DataFrame(pc.most_common(20), columns=["player", "mentions"]), use_container_width=True)
+    pc_df = pd.DataFrame(pc.most_common(20), columns=["player", "mentions"])
+    pc_df = pc_df.loc[:, ~pc_df.columns.duplicated()].copy()
+    st.dataframe(pc_df, use_container_width=True)
 
     st.markdown("### Game summaries (deterministic bullets)")
     for gd in games_included:
@@ -416,4 +469,6 @@ with tabs[2]:
 # -----------------------------
 with tabs[3]:
     st.subheader("Raw Data (filtered)")
-    st.dataframe(f, use_container_width=True)
+    raw = f.copy()
+    raw = raw.loc[:, ~raw.columns.duplicated()].copy()
+    st.dataframe(raw, use_container_width=True)

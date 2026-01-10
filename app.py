@@ -1,6 +1,6 @@
 # app.py
-# Bulls Fan Belief Intelligence (Exec-ready Streamlit)
-# Deterministic rules only. No usernames except hidden raw validation.
+# Bulls Fan Sentiment Intelligence (Exec-ready Streamlit)
+# Deterministic rules only. No usernames shown except inside "Raw validation" expander.
 
 from __future__ import annotations
 
@@ -160,19 +160,17 @@ PLAYERS: Dict[str, List[str]] = {
     "Ayo Dosunmu": [r"\bayo\b", r"\bdosunmu\b", r"\bayo dosunmu\b"],
     "Jevon Carter": [r"\bjevon\b", r"\bjevon carter\b"],
     "Kevin Huerter": [r"\bhuerter\b", r"\bkevin huerter\b"],
-    "Tre Jones": [r"\btre jones\b", r"\btre\b"],
+    "Tre Jones": [r"\btre jones\b"],
     "Julian Phillips": [r"\bjulian phillips\b", r"\bjulian\b"],
     "Dalen Terry": [r"\bdalen terry\b", r"\bdalen\b"],
-    "Jalen Smith": [r"\bjalen smith\b", r"\bjsmith\b"],
-    "Zach Collins": [r"\bzach collins\b", r"\bcollins\b"],
+    "Jalen Smith": [r"\bjalen smith\b"],
+    "Zach Collins": [r"\bzach collins\b"],
     "Isaac Okoro": [r"\bisaac okoro\b", r"\bokoro\b"],
     "Noa Essengue": [r"\bnoa essengue\b", r"\bessengue\b"],
     "Yuki Kawamura": [r"\byuki kawamura\b", r"\bkawamura\b", r"\byuki\b"],
 
-    # Coaches
     "Billy Donovan": [r"\bbilly donovan\b", r"\bdonovan\b"],
 
-    # Broadcasters
     "Stacey King": [r"\bstacey king\b", r"\bstacey\b"],
     "Adam Amin": [r"\badam amin\b", r"\bamin\b"],
 }
@@ -262,7 +260,6 @@ def pct(part: int, total: int) -> float:
     return round(100.0 * part / total, 1)
 
 def heat_score(df_subset: pd.DataFrame) -> float:
-    # Simple exec-friendly risk pulse: negativity % + small volume adjustment
     total = max(len(df_subset), 1)
     neg_ct = int((df_subset["sentiment"] == "negative").sum())
     return round((neg_ct / total) * 100.0 + (len(df_subset) / 75.0), 1)
@@ -291,6 +288,14 @@ def theme_counts_for_df(df_subset: pd.DataFrame) -> Counter:
             if comment_hits_any_patterns(body, pats):
                 c[theme] += 1
     return c
+
+def safe_top_label(counter: Counter, default: str = "—") -> str:
+    if not counter:
+        return default
+    items = counter.most_common(1)
+    if not items:
+        return default
+    return str(items[0][0]) if items[0] and items[0][0] else default
 
 def theme_kpi_table(df_subset: pd.DataFrame) -> pd.DataFrame:
     total = max(len(df_subset), 1)
@@ -358,7 +363,6 @@ def build_exec_bullets(slice_df: pd.DataFrame) -> List[str]:
         f"{pct(neu, total)}% neutral, {pct(pos, total)}% positive."
     )
 
-    # Where did it peak?
     if live and post:
         if post > live * 1.25:
             bullets.append("Conversation intensified after the final (postgame > live).")
@@ -367,15 +371,13 @@ def build_exec_bullets(slice_df: pd.DataFrame) -> List[str]:
         else:
             bullets.append("Engagement was steady (live and postgame similar).")
 
-    # What narratives dominate?
-    top_themes = [k for k, _ in theme_counts_for_df(slice_df).most_common(4)]
+    top_themes = theme_counts_for_df(slice_df).most_common(4)
     if top_themes:
-        bullets.append("Top narratives: " + ", ".join(top_themes) + ".")
+        bullets.append("Top narratives: " + ", ".join([t for t, _ in top_themes]) + ".")
 
-    # Who is central?
     top_people = player_counts_for_df(slice_df).most_common(4)
     if top_people:
-        bullets.append("Most discussed: " + ", ".join([f"{n}" for n, _ in top_people]) + ".")
+        bullets.append("Most discussed: " + ", ".join([n for n, _ in top_people]) + ".")
 
     hs = heat_score(slice_df)
     if hs >= 65:
@@ -389,12 +391,11 @@ def build_exec_bullets(slice_df: pd.DataFrame) -> List[str]:
 
 
 # -----------------------------
-# Optional threads.csv enrichment (for opponent + home/away)
+# Optional threads.csv enrichment (opponent + home/away)
 # -----------------------------
 def load_threads_csv(file) -> pd.DataFrame:
     df = pd.read_csv(file)
     df = _ensure_no_duplicate_columns(df)
-    # Expect at least: thread_id, title, url, created_utc, num_comments, score, thread_type
     for col in ["thread_id", "title", "url", "created_utc", "thread_type"]:
         if col not in df.columns:
             df[col] = None
@@ -404,39 +405,23 @@ def load_threads_csv(file) -> pd.DataFrame:
     return df
 
 def infer_opponent_home_away(title: str) -> Tuple[str, str]:
-    """
-    Best-effort parsing from Reddit thread titles.
-    Returns (opponent, home_away) where home_away is 'Home', 'Away', or 'Unknown'.
-    """
     t = (title or "").strip()
 
-    # Common forms:
-    # "Game Thread: Chicago Bulls (x-y) vs Miami Heat (a-b)"
-    # "Game Thread: Chicago Bulls ... @ Boston Celtics ..."
-    # "POST GAME THREAD: The Chicago Bulls defeat the Charlotte Hornets ..."
-    # We'll try to detect @ / vs patterns first.
     if re.search(r"\b@\b", t):
-        # Bulls @ Opponent -> away
-        # grab text after @ up to '(' or '-' or end
         m = re.search(r"@\s*([A-Za-z .'-]+)", t)
         if m:
-            opp = m.group(1).strip()
-            opp = re.split(r"[\(\-–—|]", opp)[0].strip()
+            opp = re.split(r"[\(\-–—|]", m.group(1).strip())[0].strip()
             return opp, "Away"
 
     if re.search(r"\bvs\.?\b", t, flags=re.I):
         m = re.search(r"\bvs\.?\s*([A-Za-z .'-]+)", t, flags=re.I)
         if m:
-            opp = m.group(1).strip()
-            opp = re.split(r"[\(\-–—|]", opp)[0].strip()
+            opp = re.split(r"[\(\-–—|]", m.group(1).strip())[0].strip()
             return opp, "Home"
 
-    # Postgame titles often mention opponent but not vs/@ cleanly.
-    # Try: "defeat the X" or "lose to the X"
     m = re.search(r"\b(defeat|beat|lose to|lost to)\s+the\s+([A-Za-z .'-]+)", t, flags=re.I)
     if m:
-        opp = m.group(2).strip()
-        opp = re.split(r"[\(\-–—|]", opp)[0].strip()
+        opp = re.split(r"[\(\-–—|]", m.group(2).strip())[0].strip()
         return opp, "Unknown"
 
     return "Unknown", "Unknown"
@@ -461,7 +446,6 @@ def load_comment_csvs(files) -> pd.DataFrame:
             if col not in df.columns:
                 df[col] = None
 
-        # Prefer filename metadata
         if gd:
             df["game_date"] = gd
         df["game_date"] = df["game_date"].astype(str).str.slice(0, 10)
@@ -481,13 +465,14 @@ def load_comment_csvs(files) -> pd.DataFrame:
         df["sentiment"] = df["body"].apply(classify_sentiment)
         df["score_num"] = pd.to_numeric(df["score"], errors="coerce").fillna(0).astype(int)
 
-        # privacy: never display author outside hidden raw section
+        # File coverage (for debugging selection issues)
+        df["_source_file"] = f.name
+
         all_rows.append(df)
 
     if not all_rows:
         return pd.DataFrame()
-    out = pd.concat(all_rows, ignore_index=True)
-    return out
+    return pd.concat(all_rows, ignore_index=True)
 
 
 # -----------------------------
@@ -495,7 +480,7 @@ def load_comment_csvs(files) -> pd.DataFrame:
 # -----------------------------
 st.title("Bulls Fan Sentiment Intelligence")
 st.markdown('<div class="header-rule"></div>', unsafe_allow_html=True)
-st.caption("Exec view: highlights risk, drivers, and evidence. Score = upvotes. Usernames are hidden.")
+st.caption("Exec view: risk, drivers, and evidence. Score = upvotes. Usernames are hidden.")
 
 st.sidebar.header("Data Input")
 comments_files = st.sidebar.file_uploader(
@@ -505,7 +490,7 @@ comments_files = st.sidebar.file_uploader(
 )
 
 threads_file = st.sidebar.file_uploader(
-    "Optional: upload threads.csv to show opponent + home/away",
+    "Optional: upload threads.csv for opponent + home/away",
     type=["csv"],
     accept_multiple_files=False
 )
@@ -523,37 +508,28 @@ threads_df = None
 if threads_file is not None:
     threads_df = load_threads_csv(threads_file)
 
-# Enrich with titles if possible
-if threads_df is not None and "thread_id" in df.columns:
-    # Merge title/url onto comments for context inference (still not shown as IDs)
+if threads_df is not None:
     meta = threads_df[["thread_id", "title", "url", "thread_type", "created_utc"]].copy()
     meta["thread_id"] = meta["thread_id"].astype(str)
     df = df.merge(meta, on=["thread_id"], how="left", suffixes=("", "_meta"))
-    # If thread_type missing in comments, use meta
     if "thread_type_meta" in df.columns:
         df["thread_type"] = df["thread_type"].where(df["thread_type"].notna(), df["thread_type_meta"])
         df["thread_type"] = df["thread_type"].apply(normalize_thread_type)
-
     df["title"] = df.get("title", "").astype(str)
 
-# Build games index (one row per game_date)
 all_dates = sorted([d for d in df["game_date"].dropna().unique().tolist() if re.match(r"^\d{4}-\d{2}-\d{2}$", str(d))])
 if not all_dates:
     st.error("No valid game_date values. Ensure filenames are YYYY-MM-DD_live_game_THREADID.csv.")
     st.stop()
 
+# Build games table (with coverage)
 games_rows = []
 for gd in all_dates:
     gdf = df[df["game_date"] == gd].copy()
 
     opp, ha = "Unknown", "Unknown"
     if "title" in gdf.columns and gdf["title"].notna().any():
-        # pick the most common non-empty title (usually game thread title)
-        title_mode = (
-            gdf["title"].astype(str)
-            .replace("nan", "")
-            .replace("None", "")
-        )
+        title_mode = gdf["title"].astype(str).replace("nan", "").replace("None", "")
         title_mode = title_mode[title_mode.str.len() > 0]
         if len(title_mode) > 0:
             t = title_mode.value_counts().index[0]
@@ -568,6 +544,8 @@ for gd in all_dates:
     post = int(by_type.get("postgame", 0))
     pre = int(by_type.get("pregame", 0))
 
+    # coverage: which files are present?
+    files = sorted(gdf["_source_file"].dropna().unique().tolist())
     games_rows.append({
         "game_date": gd,
         "opponent": opp,
@@ -578,32 +556,28 @@ for gd in all_dates:
         "pregame": pre,
         "live": live,
         "postgame": post,
+        "files_count": len(files),
     })
 
 games = pd.DataFrame(games_rows).sort_values("game_date", ascending=False)
 
-# Sidebar filters / game selection
 st.sidebar.header("Game Selection")
-# display label for execs
 games["label"] = games.apply(
-    lambda r: f"{r['game_date']}  •  vs {r['opponent']}  •  {r['home_away']}",
+    lambda r: f"{r['game_date']} • vs {r['opponent']} • {r['home_away']} • {int(r['comments'])} comments",
     axis=1
 )
-
 selected_label = st.sidebar.selectbox("Select game", options=games["label"].tolist(), index=0)
 selected_game_date = games.loc[games["label"] == selected_label, "game_date"].iloc[0]
 
 context_types = st.sidebar.multiselect(
-    "Include thread contexts",
+    "Include contexts",
     options=["pregame", "live_game", "postgame"],
     default=["pregame", "live_game", "postgame"]
 )
 
 view_mode = st.sidebar.radio("View mode", options=["Game view", "Weekly view"], index=0)
-
 search_text = st.sidebar.text_input("Search (contains)", value="").strip().lower()
 
-# Slice
 slice_df = df[(df["game_date"] == selected_game_date) & (df["thread_type"].isin(context_types))].copy()
 if search_text:
     slice_df = slice_df[slice_df["body"].str.lower().str.contains(re.escape(search_text), na=False)].copy()
@@ -613,7 +587,19 @@ if slice_df.empty:
     st.stop()
 
 # -----------------------------
-# Executive "At-a-glance" section
+# Coverage banner (prevents the “why only 12 comments?” confusion)
+# -----------------------------
+coverage = slice_df.groupby(["thread_type", "_source_file"]).size().reset_index(name="rows")
+st.markdown('<div class="card-soft">', unsafe_allow_html=True)
+st.markdown("<div style='font-weight:850; font-size:1.02rem;'>Upload Coverage (what is included in this view)</div>", unsafe_allow_html=True)
+st.caption("If you only see 12 comments, it means only one CSV (or only one context) exists for that date.")
+st.dataframe(coverage.rename(columns={"thread_type": "context", "_source_file": "file"}), use_container_width=True, hide_index=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
+
+# -----------------------------
+# Executive Summary
 # -----------------------------
 st.subheader("Executive Summary")
 sel_meta = games[games["game_date"] == selected_game_date].iloc[0].to_dict()
@@ -629,7 +615,7 @@ with headline_left:
     <span class="pill">{sel_meta.get('home_away','Unknown')}</span>
   </div>
   <div style="margin-top:10px; color:{MUTED}; font-size:0.92rem;">
-    This dashboard summarizes fan sentiment and narrative drivers from live and postgame Reddit threads.
+    This dashboard summarizes fan sentiment and narrative drivers from Reddit threads.
   </div>
 </div>
 """,
@@ -642,7 +628,8 @@ with headline_right:
   <div style="color:{MUTED}; font-size:0.85rem; font-weight:700;">Data coverage</div>
   <div style="margin-top:6px; font-size:0.92rem;">
     Comments analyzed: <b>{int(sel_meta.get('comments',0))}</b><br/>
-    Pregame: <b>{int(sel_meta.get('pregame',0))}</b> • Live: <b>{int(sel_meta.get('live',0))}</b> • Post: <b>{int(sel_meta.get('postgame',0))}</b>
+    Pregame: <b>{int(sel_meta.get('pregame',0))}</b> • Live: <b>{int(sel_meta.get('live',0))}</b> • Post: <b>{int(sel_meta.get('postgame',0))}</b><br/>
+    Files uploaded for date: <b>{int(sel_meta.get('files_count',0))}</b>
   </div>
 </div>
 """,
@@ -651,22 +638,22 @@ with headline_right:
 
 st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
-# KPI strip
+# KPIs
 total = len(slice_df)
 sent = slice_df["sentiment"].value_counts()
 neg_ct = int(sent.get("negative", 0))
 pos_ct = int(sent.get("positive", 0))
-mix_ct = int(sent.get("mixed", 0))
-neu_ct = int(sent.get("neutral", 0))
 
 hs = heat_score(slice_df)
 neg_pct = pct(neg_ct, max(total, 1))
 pos_pct = pct(pos_ct, max(total, 1))
 
 by_type = slice_df.groupby("thread_type").size().to_dict()
-pre_ct = int(by_type.get("pregame", 0))
 live_ct = int(by_type.get("live_game", 0))
 post_ct = int(by_type.get("postgame", 0))
+
+top_theme = safe_top_label(theme_counts_for_df(slice_df), default="None detected")
+top_mention = safe_top_label(player_counts_for_df(slice_df), default="None detected")
 
 st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
 st.markdown(
@@ -684,7 +671,7 @@ st.markdown(
 <div class="kpi">
   <div class="kpi-label">Positive Share</div>
   <div class="kpi-value">{pos_pct}%</div>
-  <div class="kpi-sub">Context for momentum / praise</div>
+  <div class="kpi-sub">Momentum / praise context</div>
 </div>
 <div class="kpi">
   <div class="kpi-label">Engagement</div>
@@ -692,14 +679,14 @@ st.markdown(
   <div class="kpi-sub">Comment volume in selected slice</div>
 </div>
 <div class="kpi">
-  <div class="kpi-label">Live vs Post Shift</div>
+  <div class="kpi-label">Live → Post Shift</div>
   <div class="kpi-value">{post_ct - live_ct}</div>
   <div class="kpi-sub">Postgame comments minus live</div>
 </div>
 <div class="kpi">
-  <div class="kpi-label">Top Risk Driver</div>
-  <div class="kpi-value">{(theme_counts_for_df(slice_df).most_common(1)[0][0] if len(slice_df) else "—")}</div>
-  <div class="kpi-sub">Most frequent theme hit</div>
+  <div class="kpi-label">Top Drivers</div>
+  <div class="kpi-value">{top_theme}</div>
+  <div class="kpi-sub">Top mention: {top_mention}</div>
 </div>
 """,
     unsafe_allow_html=True
@@ -719,15 +706,14 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
 # -----------------------------
-# Drivers section: Themes
+# Themes + drilldown
 # -----------------------------
 st.subheader("Narrative Drivers (Themes)")
 theme_tbl = theme_kpi_table(slice_df)
 if theme_tbl.empty:
-    st.info("No theme hits detected with current rules.")
+    st.info("No theme hits detected with current rules. Expand THEME patterns to match more language.")
 else:
     left, right = st.columns([1.25, 1.0])
-
     with left:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("<div style='font-weight:850; font-size:1.02rem;'>Theme leaderboard</div>", unsafe_allow_html=True)
@@ -738,7 +724,6 @@ else:
     with right:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("<div style='font-weight:850; font-size:1.02rem;'>Theme drill-down</div>", unsafe_allow_html=True)
-
         theme_pick = st.selectbox("Select a theme", options=theme_tbl["Theme"].tolist())
         c1, c2 = st.columns(2)
         with c1:
@@ -747,29 +732,27 @@ else:
         with c2:
             st.markdown("**Most negative (by upvotes)**")
             st.dataframe(most_negative_for_theme(slice_df, theme_pick, limit=12), use_container_width=True, hide_index=True)
-
         st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
 # -----------------------------
-# Accountability section: Players/Coach/Announcers
+# Mentions + evidence
 # -----------------------------
 st.subheader("Who the Conversation Centers On")
 pc = player_counts_for_df(slice_df)
 pc_df = pd.DataFrame(pc.most_common(15), columns=["Name", "Mentions"])
 
 colA, colB = st.columns([1.1, 1.0])
-
 with colA:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("<div style='font-weight:850; font-size:1.02rem;'>Mention leaderboard</div>", unsafe_allow_html=True)
     st.caption("Mentions reflect narrative concentration, not performance quality.")
     if pc_df.empty:
-        st.info("No mentions detected with current patterns yet. Expand your dictionary.")
+        st.info("No mentions detected yet. Expand your patterns (PLAYERS) and add nicknames.")
     else:
         st.dataframe(pc_df, use_container_width=True, hide_index=True)
-        if ALTAIR_OK and len(pc_df) > 0:
+        if ALTAIR_OK:
             top = pc_df.head(10)
             chart = (
                 alt.Chart(top)
@@ -797,13 +780,12 @@ with colB:
 st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
 # -----------------------------
-# Portfolio view: all games table (exec navigation)
+# Recent games overview
 # -----------------------------
 st.subheader("Recent Games Overview")
-st.caption("Use this to compare risk and engagement across games at a glance.")
-overview = games[["game_date", "opponent", "home_away", "heat_score", "neg_%", "comments", "pregame", "live", "postgame"]].copy()
-overview = overview.sort_values("game_date", ascending=False)
-overview = overview.rename(columns={
+st.caption("Compare risk and engagement across games at a glance.")
+overview = games[["game_date", "opponent", "home_away", "heat_score", "neg_%", "comments", "pregame", "live", "postgame", "files_count"]].copy()
+overview = overview.sort_values("game_date", ascending=False).rename(columns={
     "game_date": "Date",
     "opponent": "Opponent",
     "home_away": "Home/Away",
@@ -812,18 +794,18 @@ overview = overview.rename(columns={
     "comments": "Comments",
     "pregame": "Pregame",
     "live": "Live",
-    "postgame": "Postgame"
+    "postgame": "Postgame",
+    "files_count": "Files"
 })
 st.dataframe(overview, use_container_width=True, hide_index=True)
 
 # -----------------------------
-# Weekly view (optional mode)
+# Weekly view
 # -----------------------------
 if view_mode == "Weekly view":
     st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
     st.subheader("Weekly Summary (date window)")
 
-    # robust: use two date inputs (no tuple unpack issues)
     parsed_dates: List[date] = []
     for d in all_dates:
         try:
@@ -867,12 +849,12 @@ if view_mode == "Weekly view":
 </div>
 <div class="kpi">
   <div class="kpi-label">Top Theme</div>
-  <div class="kpi-value">{(theme_counts_for_df(weekly).most_common(1)[0][0] if total_w else "—")}</div>
+  <div class="kpi-value">{safe_top_label(theme_counts_for_df(weekly), default="None detected")}</div>
   <div class="kpi-sub">Most frequent narrative</div>
 </div>
 <div class="kpi">
   <div class="kpi-label">Top Mention</div>
-  <div class="kpi-value">{(player_counts_for_df(weekly).most_common(1)[0][0] if total_w else "—")}</div>
+  <div class="kpi-value">{safe_top_label(player_counts_for_df(weekly), default="None detected")}</div>
   <div class="kpi-sub">Most discussed figure</div>
 </div>
 <div class="kpi">
@@ -885,16 +867,10 @@ if view_mode == "Weekly view":
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("<div style='font-weight:850; font-size:1.02rem;'>Weekly narrative drivers</div>", unsafe_allow_html=True)
-        st.dataframe(theme_kpi_table(weekly), use_container_width=True, hide_index=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
 # -----------------------------
-# Raw data (hidden + optional)
+# Raw validation (author only here)
 # -----------------------------
 with st.expander("Raw data (validation only — usernames may appear here)", expanded=False):
     safe_df = _ensure_no_duplicate_columns(slice_df.copy())
     st.dataframe(safe_df, use_container_width=True)
+

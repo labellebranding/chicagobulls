@@ -206,10 +206,10 @@ KPI_DEFINITIONS: Dict[str, Dict[str, str]] = {
         "notes": "Displayed as score (upvotes).",
     },
     "Player mentions": {
-        "definition": "How often players are referenced in comment text.",
+        "definition": "How often players/coaches/broadcast are referenced in comment text.",
         "how_calculated": "Regex alias matching; counts hit occurrences.",
         "why_it_matters": "Shows who the conversation centers on (not performance quality).",
-        "notes": "A comment can mention multiple players.",
+        "notes": "A comment can mention multiple people.",
     },
     "Theme hits": {
         "definition": "How many comments match a theme’s patterns.",
@@ -280,20 +280,46 @@ def kpi_definitions_df() -> pd.DataFrame:
 
 
 # -----------------------------
-# Deterministic dictionaries (edit freely)
+# People dictionary (Roster + coach + broadcast)
+# Deterministic. Edit freely.
 # -----------------------------
-PLAYERS: Dict[str, List[str]] = {
-    "Nikola Vucevic": [r"\bvooch\b", r"\bvucevic\b", r"\bvuc\b"],
-    "Patrick Williams": [r"\bpwill\b", r"\bpatrick williams\b", r"\bpat\b"],
+PEOPLE: Dict[str, List[str]] = {
+    # Core Bulls
+    "Matas Buzelis": [r"\bmatas\b", r"\bbuzelis\b", r"\bmatas buzelis\b"],
     "Coby White": [r"\bcoby\b", r"\bcoby white\b"],
+    "Nikola Vucevic": [r"\bvooch\b", r"\bvucevic\b", r"\bvuc\b"],
+    "Patrick Williams": [r"\bpwill\b", r"\bpatrick williams\b", r"\bpat williams\b"],
+    "Ayo Dosunmu": [r"\bayo\b", r"\bdosunmu\b", r"\bayo dosunmu\b"],
     "Josh Giddey": [r"\bgiddey\b", r"\bjosh giddey\b"],
     "Lonzo Ball": [r"\blonzo\b", r"\blonzo ball\b"],
-    "Ayo Dosunmu": [r"\bayo\b", r"\bdosunmu\b", r"\bayo dosunmu\b"],
-    "Matas Buzelis": [r"\bmatas\b", r"\bbuzelis\b", r"\bmatas buzelis\b"],
+    "Jevon Carter": [r"\bjevon\b", r"\bjevon carter\b"],
+    "Zach Collins": [r"\bzach collins\b", r"\bcollins\b"],
+    "Kevin Huerter": [r"\bhuerter\b", r"\bkevin huerter\b"],
+    "Tre Jones": [r"\btre jones\b", r"\bjones\b"],
+    "Julian Phillips": [r"\bjulian phillips\b", r"\bphillips\b"],
+    "Dalen Terry": [r"\bdalen\b", r"\bdalen terry\b"],
+    "Jalen Smith": [r"\bjalen smith\b", r"\bsmith\b"],
+    "Isaac Okoro": [r"\bokoro\b", r"\bisaac okoro\b"],
+    "Noa Essengue": [r"\bessengue\b", r"\bnoa essengue\b"],
+    "Trentyn Flowers": [r"\bflowers\b", r"\btrentyn flowers\b"],
+    "Yuki Kawamura": [r"\bkawamura\b", r"\byuki\b", r"\byuki kawamura\b"],
+    "Emanuel Miller": [r"\bemanu(?:el)? miller\b", r"\bemanu(?:el)?\b"],
+    "Lachlan Olbrich": [r"\bolbrich\b", r"\blachlan olbrich\b"],
+
+    # Coach
     "Billy Donovan": [r"\bbilly donovan\b", r"\bdonovan\b"],
-    # add more
+
+    # Front office / org (optional but useful)
+    "AKME": [r"\bakme\b", r"\bak\b", r"\bkarnisovas\b", r"\beversley\b", r"\bartūras\b"],
+
+    # Broadcast / media
+    "Stacey King": [r"\bstacey king\b", r"\bstacey\b", r"\bking\b"],
+    "Adam Amin": [r"\badam amin\b", r"\badam\b", r"\bamin\b"],
 }
 
+# -----------------------------
+# Deterministic themes (edit freely)
+# -----------------------------
 THEMES: Dict[str, List[str]] = {
     "injury": [r"\binjur", r"\bconcussion\b", r"\bprotocol\b", r"\bout\b", r"\bquestionable\b"],
     "coaching": [r"\bcoach\b", r"\bcoaching\b", r"\blineup\b", r"\brotation\b", r"\btimeouts?\b", r"\bdonovan\b"],
@@ -302,7 +328,7 @@ THEMES: Dict[str, List[str]] = {
     "front_office": [r"\bfront office\b", r"\bakme\b", r"\bkarnisovas\b", r"\btrade\b", r"\bdeadline\b"],
     "effort_identity": [r"\beffort\b", r"\bsoft\b", r"\bheart\b", r"\bidentity\b", r"\bvibes\b"],
     "tanking": [r"\btank\b", r"\blottery\b", r"\bpicks?\b", r"\btop pick\b"],
-    # add more
+    "broadcast": [r"\bstacey king\b", r"\badam amin\b", r"\bannounc", r"\bcommentator", r"\bbroadcast"],
 }
 
 NEG_WORDS = [
@@ -336,10 +362,6 @@ def normalize_thread_type(x: str) -> str:
 
 
 def parse_filename_meta(name: str) -> Tuple[Optional[str], str, Optional[str]]:
-    """
-    Returns (game_date_str, thread_type, thread_id) from filename if possible.
-    Example: 2026-01-03_live_game_1q3aeit.csv
-    """
     m = FILENAME_RE.search(name)
     if not m:
         return None, "unknown", None
@@ -357,10 +379,6 @@ def safe_text(x) -> str:
 
 
 def classify_sentiment(text: str) -> str:
-    """
-    Simple heuristic sentiment.
-    - neutral/positive/negative/mixed
-    """
     txt = (text or "").lower()
     neg = any(re.search(p, txt, flags=re.I) for p in NEG_WORDS)
     pos = any(re.search(p, txt, flags=re.I) for p in POS_WORDS)
@@ -383,8 +401,8 @@ def comment_hits_theme(body: str, theme: str) -> bool:
     return comment_hits_any_patterns(body, pats)
 
 
-def comment_hits_player(body: str, player: str) -> bool:
-    pats = PLAYERS.get(player, [])
+def comment_hits_person(body: str, person: str) -> bool:
+    pats = PEOPLE.get(person, [])
     return comment_hits_any_patterns(body, pats)
 
 
@@ -400,26 +418,20 @@ def heat_score(df_subset: pd.DataFrame) -> float:
     return round((neg_ct / total) * 100.0 + (len(df_subset) / 60.0), 1)
 
 
-def player_counts_for_df(df_subset: pd.DataFrame) -> Counter:
-    """
-    Mention counts (counts number of regex hits)
-    """
+def people_counts_for_df(df_subset: pd.DataFrame) -> Counter:
     c = Counter()
     bodies = df_subset["body"].astype(str).tolist()
     for body in bodies:
-        for player, pats in PLAYERS.items():
+        for person, pats in PEOPLE.items():
             hits = 0
             for p in pats:
                 hits += len(re.findall(p, body, flags=re.I))
             if hits:
-                c[player] += hits
+                c[person] += hits
     return c
 
 
 def theme_counts_for_df(df_subset: pd.DataFrame) -> Counter:
-    """
-    Comment-level hit counts (each comment counts once per theme if it matches)
-    """
     c = Counter()
     bodies = df_subset["body"].astype(str).tolist()
     for body in bodies:
@@ -430,9 +442,6 @@ def theme_counts_for_df(df_subset: pd.DataFrame) -> Counter:
 
 
 def theme_kpi_table(df_subset: pd.DataFrame) -> pd.DataFrame:
-    """
-    Theme KPI table for the slice
-    """
     total = max(len(df_subset), 1)
     rows = []
     for theme in THEMES.keys():
@@ -466,31 +475,50 @@ def theme_kpi_table(df_subset: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["hits", "post_minus_live"], ascending=[False, False])
 
 
+def _safe_comment_view_cols(df_in: pd.DataFrame) -> pd.DataFrame:
+    """
+    Privacy: NO author/usernames anywhere except Raw Data tab.
+    """
+    cols = ["game_date", "thread_type", "score_num", "sentiment", "body"]
+    cols = [c for c in cols if c in df_in.columns]
+    out = df_in[cols].copy()
+    if "score_num" in out.columns:
+        out = out.rename(columns={"score_num": "score (upvotes)"})
+    return out
+
+
 def top_comments_for_theme(df_subset: pd.DataFrame, theme: str, limit: int = 25) -> pd.DataFrame:
-    """
-    Top upvoted comments for a deterministic theme (NO author shown)
-    """
     x = df_subset.copy()
     x["hits_theme"] = x["body"].apply(lambda t: comment_hits_theme(t, theme))
     x = x[x["hits_theme"] == True].copy()
-
-    cols = [c for c in ["game_date", "thread_type", "score_num", "sentiment", "body"] if c in x.columns]
-    x = x.sort_values("score_num", ascending=False)[cols].head(limit)
-    return x.rename(columns={"score_num": "score (upvotes)"})
+    x = x.sort_values("score_num", ascending=False).head(limit)
+    return _safe_comment_view_cols(x)
 
 
 def most_negative_for_theme(df_subset: pd.DataFrame, theme: str, limit: int = 25) -> pd.DataFrame:
-    """
-    Most negative/mixed comments for a theme, sorted by upvotes (NO author shown)
-    """
     x = df_subset.copy()
     x["hits_theme"] = x["body"].apply(lambda t: comment_hits_theme(t, theme))
     x = x[x["hits_theme"] == True].copy()
     x = x[x["sentiment"].isin(["negative", "mixed"])].copy()
+    x = x.sort_values("score_num", ascending=False).head(limit)
+    return _safe_comment_view_cols(x)
 
-    cols = [c for c in ["game_date", "thread_type", "score_num", "sentiment", "body"] if c in x.columns]
-    x = x.sort_values("score_num", ascending=False)[cols].head(limit)
-    return x.rename(columns={"score_num": "score (upvotes)"})
+
+def top_comments_for_person(df_subset: pd.DataFrame, person: str, limit: int = 25) -> pd.DataFrame:
+    x = df_subset.copy()
+    x["hits_person"] = x["body"].apply(lambda t: comment_hits_person(t, person))
+    x = x[x["hits_person"] == True].copy()
+    x = x.sort_values("score_num", ascending=False).head(limit)
+    return _safe_comment_view_cols(x)
+
+
+def most_negative_for_person(df_subset: pd.DataFrame, person: str, limit: int = 25) -> pd.DataFrame:
+    x = df_subset.copy()
+    x["hits_person"] = x["body"].apply(lambda t: comment_hits_person(t, person))
+    x = x[x["hits_person"] == True].copy()
+    x = x[x["sentiment"].isin(["negative", "mixed"])].copy()
+    x = x.sort_values("score_num", ascending=False).head(limit)
+    return _safe_comment_view_cols(x)
 
 
 def deterministic_game_narrative(g: pd.DataFrame) -> Dict[str, object]:
@@ -527,10 +555,10 @@ def deterministic_game_narrative(g: pd.DataFrame) -> Dict[str, object]:
     if top_themes:
         bullets.append("Top narratives: " + ", ".join(top_themes) + ".")
 
-    players_all = player_counts_for_df(g)
-    top_players = players_all.most_common(6)
-    if top_players:
-        bullets.append("Most discussed players: " + ", ".join([f"{p} ({c})" for p, c in top_players[:3]]) + ".")
+    ppl_all = people_counts_for_df(g)
+    top_people = ppl_all.most_common(6)
+    if top_people:
+        bullets.append("Most discussed: " + ", ".join([f"{p} ({c})" for p, c in top_people[:3]]) + ".")
 
     hs = heat_score(g)
     if hs >= 70:
@@ -540,17 +568,15 @@ def deterministic_game_narrative(g: pd.DataFrame) -> Dict[str, object]:
     else:
         bullets.append("Heat level: LOW (calmer / neutral-to-positive).")
 
-    # Fan quotes (top upvoted), no author
-    fan_quotes = g.copy()
-    cols = [c for c in ["game_date", "thread_type", "score_num", "sentiment", "body"] if c in fan_quotes.columns]
-    fan_quotes = fan_quotes.sort_values("score_num", ascending=False).head(15)[cols]
-    fan_quotes = fan_quotes.rename(columns={"score_num": "score (upvotes)"})
+    # Fan quotes (top upvoted), privacy-safe
+    fan_quotes = g.copy().sort_values("score_num", ascending=False).head(15)
+    fan_quotes = _safe_comment_view_cols(fan_quotes)
 
     return {
         "bullets": bullets,
         "heat_score": hs,
         "themes_all": themes_all,
-        "players_all": players_all,
+        "people_all": ppl_all,
         "sent_counts": s_all,
         "fan_quotes": fan_quotes,
     }
@@ -607,7 +633,7 @@ def load_uploaded_csvs(files) -> pd.DataFrame:
         df["body"] = df["body"].apply(safe_text)
         df["sentiment"] = df["body"].apply(classify_sentiment)
 
-        # score = upvotes
+        # score = upvotes (always numeric)
         df["score_num"] = pd.to_numeric(df["score"], errors="coerce").fillna(0).astype(int)
 
         all_rows.append(df)
@@ -782,12 +808,12 @@ with tabs[0]:
 
     st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
-    # Players
-    st.markdown("### Player mention leaderboard (filtered)")
-    pc = player_counts_for_df(f)
-    pc_df = pd.DataFrame(pc.most_common(25), columns=["player", "mentions"])
+    # People leaderboard
+    st.markdown("### People mention leaderboard (players/coaches/broadcast, filtered)")
+    pc = people_counts_for_df(f)
+    pc_df = pd.DataFrame(pc.most_common(30), columns=["person", "mentions"])
     if pc_df.empty:
-        st.info("No player mentions detected with the current player dictionary.")
+        st.info("No people mentions detected with the current dictionary.")
     else:
         if ALTAIR_OK:
             top10 = pc_df.head(10)
@@ -796,13 +822,24 @@ with tabs[0]:
                 .mark_bar(color=BULLS_RED)
                 .encode(
                     x=alt.X("mentions:Q", title="Mentions"),
-                    y=alt.Y("player:N", sort="-x", title=""),
-                    tooltip=["player", "mentions"],
+                    y=alt.Y("person:N", sort="-x", title=""),
+                    tooltip=["person", "mentions"],
                 )
                 .properties(height=320)
             )
             st.altair_chart(chart, use_container_width=True)
         st.dataframe(pc_df, use_container_width=True, hide_index=True)
+
+    st.markdown("### People drill-down (privacy-safe)")
+    if not pc_df.empty:
+        person_pick = st.selectbox("Select a person", options=pc_df["person"].tolist(), key="person_pick")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Top upvoted comments (score = upvotes)")
+            st.dataframe(top_comments_for_person(f, person_pick, limit=25), use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown("#### Most negative comments (by upvotes)")
+            st.dataframe(most_negative_for_person(f, person_pick, limit=25), use_container_width=True, hide_index=True)
 
     st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
@@ -872,13 +909,8 @@ with tabs[0]:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("#### Top upvoted comments (score = upvotes)")
-                cols = ["game_date", "thread_type", "score_num", "sentiment", "body"]
-                cols = [c for c in cols if c in sub.columns]
-                st.dataframe(
-                    sub[cols].head(25).rename(columns={"score_num": "score (upvotes)"}),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                safe_sub = _safe_comment_view_cols(sub)
+                st.dataframe(safe_sub.head(25), use_container_width=True, hide_index=True)
 
             with c2:
                 st.markdown("#### Representative comments (closest to theme center)")
@@ -889,13 +921,8 @@ with tabs[0]:
                 else:
                     rep_rows = assignments.iloc[reps[cid]].copy()
                     rep_rows = rep_rows.sort_values("score_num", ascending=False)
-                    cols = ["game_date", "thread_type", "score_num", "sentiment", "body"]
-                    cols = [c for c in cols if c in rep_rows.columns]
-                    st.dataframe(
-                        rep_rows[cols].head(25).rename(columns={"score_num": "score (upvotes)"}),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
+                    safe_rep = _safe_comment_view_cols(rep_rows)
+                    st.dataframe(safe_rep.head(25), use_container_width=True, hide_index=True)
 
 
 # -----------------------------
@@ -924,9 +951,9 @@ with tabs[1]:
     tc = out["themes_all"]
     st.dataframe(pd.DataFrame(tc.most_common(20), columns=["theme", "hits"]), use_container_width=True, hide_index=True)
 
-    st.markdown("### Top player mentions (game)")
-    pc2 = out["players_all"]
-    st.dataframe(pd.DataFrame(pc2.most_common(20), columns=["player", "mentions"]), use_container_width=True, hide_index=True)
+    st.markdown("### Top people mentions (game)")
+    pc2 = out["people_all"]
+    st.dataframe(pd.DataFrame(pc2.most_common(25), columns=["person", "mentions"]), use_container_width=True, hide_index=True)
 
     st.markdown("### Fan quotes (top upvoted, usernames hidden)")
     st.dataframe(out["fan_quotes"], use_container_width=True, hide_index=True)
@@ -952,19 +979,16 @@ with tabs[2]:
 
     min_d, max_d = min(date_objs), max(date_objs)
 
-    picked = st.date_input(
-        "Select date range",
-        value=(min_d, max_d),
-        min_value=min_d,
-        max_value=max_d,
-        key="weekly_range",
-    )
+    # Avoid Streamlit tuple/range differences across versions:
+    cA, cB = st.columns(2)
+    with cA:
+        start_d = st.date_input("Start date", value=min_d, min_value=min_d, max_value=max_d, key="wk_start")
+    with cB:
+        end_d = st.date_input("End date", value=max_d, min_value=min_d, max_value=max_d, key="wk_end")
 
-    # Robust handling across Streamlit versions
-    if isinstance(picked, (tuple, list)) and len(picked) == 2 and picked[0] and picked[1]:
-        start_d, end_d = picked
-    else:
-        start_d, end_d = min_d, max_d
+    if start_d > end_d:
+        st.warning("Start date is after end date. Swapping them.")
+        start_d, end_d = end_d, start_d
 
     weekly = df.copy()
     weekly["game_date_obj"] = pd.to_datetime(weekly["game_date"], errors="coerce").dt.date
@@ -989,9 +1013,9 @@ with tabs[2]:
     tcw = theme_counts_for_df(weekly)
     st.dataframe(pd.DataFrame(tcw.most_common(20), columns=["theme", "hits"]), use_container_width=True, hide_index=True)
 
-    st.markdown("### Top player mentions (overall)")
-    pcw = player_counts_for_df(weekly)
-    st.dataframe(pd.DataFrame(pcw.most_common(20), columns=["player", "mentions"]), use_container_width=True, hide_index=True)
+    st.markdown("### Top people mentions (overall)")
+    pcw = people_counts_for_df(weekly)
+    st.dataframe(pd.DataFrame(pcw.most_common(25), columns=["person", "mentions"]), use_container_width=True, hide_index=True)
 
     st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
@@ -1014,6 +1038,22 @@ with tabs[2]:
         with c2:
             st.markdown("#### Most negative comments (weekly, by upvotes)")
             st.dataframe(most_negative_for_theme(weekly, theme_pick_w, limit=25), use_container_width=True, hide_index=True)
+
+    st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
+
+    st.markdown("### People drill-down (weekly, usernames hidden)")
+    pcw_df = pd.DataFrame(pcw.most_common(40), columns=["person", "mentions"])
+    if pcw_df.empty:
+        st.info("No people mentions detected in this date range.")
+    else:
+        person_pick_w = st.selectbox("Select a person (weekly)", options=pcw_df["person"].tolist(), key="person_weekly_pick")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Top upvoted comments (weekly)")
+            st.dataframe(top_comments_for_person(weekly, person_pick_w, limit=25), use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown("#### Most negative comments (weekly)")
+            st.dataframe(most_negative_for_person(weekly, person_pick_w, limit=25), use_container_width=True, hide_index=True)
 
     st.markdown('<div class="hr"></div>', unsafe_allow_html=True)
 
@@ -1059,4 +1099,3 @@ with tabs[4]:
 
     safe_f = _ensure_no_duplicate_columns(f.copy())
     st.dataframe(safe_f, use_container_width=True)
-
